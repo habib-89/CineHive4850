@@ -16,6 +16,9 @@ const JWT_SECRET = process.env.JWT_SECRET;
 
 // Register a new user
 // Expects JSON body: { username, email, password, dateOfBirth }
+// --- Auth (updated) ---
+
+// Register a new user — always as CUSTOMER, regardless of any role field sent
 app.post('/auth/register', async (req, res) => {
   const { username, email, password, dateOfBirth } = req.body;
 
@@ -27,8 +30,8 @@ app.post('/auth/register', async (req, res) => {
     const passwordHash = await bcrypt.hash(password, 10);
 
     const result = await db.execute(
-      `INSERT INTO APP_USER (USERNAME, EMAIL, PASSWORD_HASH, DATE_OF_BIRTH, DATE_JOINED)
-       VALUES (:username, :email, :passwordHash, :dateOfBirth, SYSDATE)
+      `INSERT INTO APP_USER (USERNAME, EMAIL, PASSWORD_HASH, DATE_OF_BIRTH, DATE_JOINED, ROLE)
+       VALUES (:username, :email, :passwordHash, :dateOfBirth, SYSDATE, 'CUSTOMER')
        RETURNING USER_ID INTO :userId`,
       {
         username,
@@ -40,8 +43,8 @@ app.post('/auth/register', async (req, res) => {
     );
     const userId = result.outBinds.userId[0];
 
-    const token = jwt.sign({ userId, username }, JWT_SECRET, { expiresIn: '7d' });
-    res.status(201).json({ message: 'User registered', userId, token });
+    const token = jwt.sign({ userId, username, role: 'CUSTOMER', cinemaId: null }, JWT_SECRET, { expiresIn: '7d' });
+    res.status(201).json({ message: 'User registered', userId, role: 'CUSTOMER', cinemaId: null, token });
   } catch (err) {
     console.error(err);
     if (err.errorNum === 1) {
@@ -51,8 +54,7 @@ app.post('/auth/register', async (req, res) => {
   }
 });
 
-// Log in an existing user
-// Expects JSON body: { email, password }
+// Log in — token now carries role and cinemaId (for admins)
 app.post('/auth/login', async (req, res) => {
   const { email, password } = req.body;
 
@@ -62,7 +64,7 @@ app.post('/auth/login', async (req, res) => {
 
   try {
     const result = await db.execute(
-      `SELECT USER_ID, USERNAME, PASSWORD_HASH FROM APP_USER WHERE EMAIL = :email`,
+      `SELECT USER_ID, USERNAME, PASSWORD_HASH, ROLE, CINEMA_ID FROM APP_USER WHERE EMAIL = :email`,
       { email }
     );
 
@@ -77,13 +79,32 @@ app.post('/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
-    const token = jwt.sign({ userId: user.USER_ID, username: user.USERNAME }, JWT_SECRET, { expiresIn: '7d' });
-    res.json({ message: 'Login successful', userId: user.USER_ID, username: user.USERNAME, token });
+    const token = jwt.sign(
+      { userId: user.USER_ID, username: user.USERNAME, role: user.ROLE, cinemaId: user.CINEMA_ID },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    res.json({
+      message: 'Login successful',
+      userId: user.USER_ID,
+      username: user.USERNAME,
+      role: user.ROLE,
+      cinemaId: user.CINEMA_ID,
+      token,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to log in' });
   }
 });
+
+// Middleware: only allow ADMIN role through
+function requireAdmin(req, res, next) {
+  if (req.user.role !== 'ADMIN') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
+  next();
+}
 
 // Middleware: verifies a JWT and attaches the user to req.user
 function requireAuth(req, res, next) {
@@ -661,7 +682,286 @@ app.get('/catalog/by-genre', async (req, res) => {
   }
 });
 
+// --- Admin routes (all require login + ADMIN role) ---
 
+// Get the logged-in admin's own cinema info
+app.get('/admin/me', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const result = await db.execute(
+      `SELECT CINEMA_ID, CINEMA_NAME, ADDRESS, CITY FROM CINEMA WHERE CINEMA_ID = :cinemaId`,
+      { cinemaId: req.user.cinemaId }
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'No cinema assigned to this admin' });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch cinema info' });
+  }
+});
+
+// Get the screens belonging to the admin's cinema (for the showtime form)
+app.get('/admin/screens', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const result = await db.execute(
+      `SELECT SCREEN_ID, SCREEN_NAME, CAPACITY FROM SCREEN WHERE CINEMA_ID = :cinemaId ORDER BY SCREEN_ID`,
+      { cinemaId: req.user.cinemaId }
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch screens' });
+  }
+});
+
+// Get all genres (for the Add Movie form)
+app.get('/admin/genres', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const result = await db.execute(`SELECT GENRE_ID, GENRE_NAME FROM GENRE ORDER BY GENRE_NAME`);
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch genres' });
+  }
+});
+
+// Add a new movie to the shared catalog (any admin can add — movies aren't cinema-owned)
+// Expects: { title, releaseDate, duration, language, description, trailerUrl, posterUrl,
+//            genreIds: [1,2], directorName, castNames: ["Name One", "Name Two"] }
+app.post('/admin/movies', requireAuth, requireAdmin, async (req, res) => {
+  const {
+    title, releaseDate, duration, language, description,
+    trailerUrl, posterUrl, genreIds, directorName, castNames
+  } = req.body;
+
+  if (!title || !releaseDate || !duration || !language) {
+    return res.status(400).json({ error: 'title, releaseDate, duration, and language are required' });
+  }
+
+  let connection;
+  try {
+    connection = await db.getRawConnection();
+
+    const movieResult = await connection.execute(
+      `INSERT INTO MOVIE (TITLE, RELEASE_DATE, DURATION, LANGUAGE, DESCRIPTION, TRAILER_URL, POSTER_URL)
+       VALUES (:title, TO_DATE(:releaseDate, 'YYYY-MM-DD'), :duration, :language, :description, :trailerUrl, :posterUrl)
+       RETURNING MOVIE_ID INTO :movieId`,
+      {
+        title, releaseDate, duration, language,
+        description: description || null,
+        trailerUrl: trailerUrl || null,
+        posterUrl: posterUrl || null,
+        movieId: { dir: db.oracledb.BIND_OUT, type: db.oracledb.NUMBER }
+      },
+      { autoCommit: false }
+    );
+    const movieId = movieResult.outBinds.movieId[0];
+
+    if (Array.isArray(genreIds)) {
+      for (const genreId of genreIds) {
+        await connection.execute(
+          `INSERT INTO MOVIE_GENRE (MOVIE_ID, GENRE_ID) VALUES (:movieId, :genreId)`,
+          { movieId, genreId },
+          { autoCommit: false }
+        );
+      }
+    }
+
+    if (directorName && directorName.trim()) {
+      const existing = await connection.execute(
+        `SELECT DIRECTOR_ID FROM DIRECTOR WHERE DIRECTOR_NAME = :name`,
+        { name: directorName.trim() }
+      );
+      let directorId;
+      if (existing.rows.length > 0) {
+        directorId = existing.rows[0].DIRECTOR_ID;
+      } else {
+        const insertRes = await connection.execute(
+          `INSERT INTO DIRECTOR (DIRECTOR_NAME) VALUES (:name) RETURNING DIRECTOR_ID INTO :id`,
+          { name: directorName.trim(), id: { dir: db.oracledb.BIND_OUT, type: db.oracledb.NUMBER } },
+          { autoCommit: false }
+        );
+        directorId = insertRes.outBinds.id[0];
+      }
+      await connection.execute(
+        `INSERT INTO DIRECTS (DIRECTOR_ID, MOVIE_ID) VALUES (:directorId, :movieId)`,
+        { directorId, movieId },
+        { autoCommit: false }
+      );
+    }
+
+    if (Array.isArray(castNames)) {
+      for (const name of castNames) {
+        const trimmed = (name || '').trim();
+        if (!trimmed) continue;
+        const existing = await connection.execute(
+          `SELECT ACTOR_ID FROM ACTOR WHERE ACTOR_NAME = :name`,
+          { name: trimmed }
+        );
+        let actorId;
+        if (existing.rows.length > 0) {
+          actorId = existing.rows[0].ACTOR_ID;
+        } else {
+          const insertRes = await connection.execute(
+            `INSERT INTO ACTOR (ACTOR_NAME) VALUES (:name) RETURNING ACTOR_ID INTO :id`,
+            { name: trimmed, id: { dir: db.oracledb.BIND_OUT, type: db.oracledb.NUMBER } },
+            { autoCommit: false }
+          );
+          actorId = insertRes.outBinds.id[0];
+        }
+        await connection.execute(
+          `INSERT INTO ACTS_IN (ACTOR_ID, MOVIE_ID) VALUES (:actorId, :movieId)`,
+          { actorId, movieId },
+          { autoCommit: false }
+        );
+      }
+    }
+
+    await connection.commit();
+    res.status(201).json({ message: 'Movie added', movieId });
+  } catch (err) {
+    if (connection) await connection.rollback();
+    console.error(err);
+    res.status(500).json({ error: 'Failed to add movie' });
+  } finally {
+    if (connection) {
+      try { await connection.close(); } catch (e) { console.error(e); }
+    }
+  }
+});
+
+// Get showtimes for the admin's own cinema
+app.get('/admin/showtimes', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const result = await db.execute(
+      `SELECT st.SHOWTIME_ID, st.MOVIE_ID, m.TITLE, st.SCREEN_ID, sc.SCREEN_NAME,
+              st.SHOW_DATE, st.START_TIME, st.END_TIME, st.TICKET_PRICE
+       FROM SHOWTIME st
+       JOIN SCREEN sc ON sc.SCREEN_ID = st.SCREEN_ID
+       JOIN MOVIE m ON m.MOVIE_ID = st.MOVIE_ID
+       WHERE sc.CINEMA_ID = :cinemaId
+       ORDER BY st.SHOW_DATE DESC, st.START_TIME DESC`,
+      { cinemaId: req.user.cinemaId }
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch showtimes' });
+  }
+});
+
+// Add a showtime on one of the admin's own screens
+// Expects: { movieId, screenId, showDate, startTime, ticketPrice }
+// showDate: 'YYYY-MM-DD', startTime: 'YYYY-MM-DD HH24:MI'
+app.post('/admin/showtimes', requireAuth, requireAdmin, async (req, res) => {
+  const { movieId, screenId, showDate, startTime, ticketPrice } = req.body;
+
+  if (!movieId || !screenId || !showDate || !startTime || !ticketPrice) {
+    return res.status(400).json({ error: 'movieId, screenId, showDate, startTime, and ticketPrice are required' });
+  }
+
+  try {
+    // Verify the screen actually belongs to this admin's cinema
+    const screenCheck = await db.execute(
+      `SELECT SCREEN_ID FROM SCREEN WHERE SCREEN_ID = :screenId AND CINEMA_ID = :cinemaId`,
+      { screenId, cinemaId: req.user.cinemaId }
+    );
+    if (screenCheck.rows.length === 0) {
+      return res.status(403).json({ error: 'That screen does not belong to your cinema' });
+    }
+
+    const movieResult = await db.execute(`SELECT DURATION FROM MOVIE WHERE MOVIE_ID = :movieId`, { movieId });
+    if (movieResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Movie not found' });
+    }
+    const duration = movieResult.rows[0].DURATION;
+
+    const result = await db.execute(
+      `INSERT INTO SHOWTIME (MOVIE_ID, SCREEN_ID, SHOW_DATE, START_TIME, END_TIME, TICKET_PRICE)
+       VALUES (
+         :movieId, :screenId,
+         TO_DATE(:showDate, 'YYYY-MM-DD'),
+         TO_TIMESTAMP(:startTime, 'YYYY-MM-DD HH24:MI'),
+         TO_TIMESTAMP(:startTime, 'YYYY-MM-DD HH24:MI') + :duration / 1440,
+         :ticketPrice
+       )
+       RETURNING SHOWTIME_ID INTO :showtimeId`,
+      {
+        movieId, screenId, showDate, startTime, duration, ticketPrice,
+        showtimeId: { dir: db.oracledb.BIND_OUT, type: db.oracledb.NUMBER }
+      }
+    );
+    res.status(201).json({ message: 'Showtime added', showtimeId: result.outBinds.showtimeId[0] });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to add showtime' });
+  }
+});
+
+// Update a showtime's price/date/time (admin can only touch their own cinema's showtimes)
+app.put('/admin/showtimes/:id', requireAuth, requireAdmin, async (req, res) => {
+  const { showDate, startTime, ticketPrice } = req.body;
+
+  try {
+    const ownershipCheck = await db.execute(
+      `SELECT st.SHOWTIME_ID, m.DURATION
+       FROM SHOWTIME st
+       JOIN SCREEN sc ON sc.SCREEN_ID = st.SCREEN_ID
+       JOIN MOVIE m ON m.MOVIE_ID = st.MOVIE_ID
+       WHERE st.SHOWTIME_ID = :id AND sc.CINEMA_ID = :cinemaId`,
+      { id: req.params.id, cinemaId: req.user.cinemaId }
+    );
+    if (ownershipCheck.rows.length === 0) {
+      return res.status(403).json({ error: 'You can only edit showtimes at your own cinema' });
+    }
+    const duration = ownershipCheck.rows[0].DURATION;
+
+    await db.execute(
+      `UPDATE SHOWTIME SET
+         SHOW_DATE = TO_DATE(:showDate, 'YYYY-MM-DD'),
+         START_TIME = TO_TIMESTAMP(:startTime, 'YYYY-MM-DD HH24:MI'),
+         END_TIME = TO_TIMESTAMP(:startTime, 'YYYY-MM-DD HH24:MI') + :duration / 1440,
+         TICKET_PRICE = :ticketPrice
+       WHERE SHOWTIME_ID = :id`,
+      { showDate, startTime, duration, ticketPrice, id: req.params.id }
+    );
+    res.json({ message: 'Showtime updated' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update showtime' });
+  }
+});
+
+// Delete a showtime (only if it belongs to the admin's cinema and has no bookings yet)
+app.delete('/admin/showtimes/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const ownershipCheck = await db.execute(
+      `SELECT st.SHOWTIME_ID
+       FROM SHOWTIME st
+       JOIN SCREEN sc ON sc.SCREEN_ID = st.SCREEN_ID
+       WHERE st.SHOWTIME_ID = :id AND sc.CINEMA_ID = :cinemaId`,
+      { id: req.params.id, cinemaId: req.user.cinemaId }
+    );
+    if (ownershipCheck.rows.length === 0) {
+      return res.status(403).json({ error: 'You can only delete showtimes at your own cinema' });
+    }
+
+    const bookingCheck = await db.execute(
+      `SELECT COUNT(*) AS CNT FROM BOOKING WHERE SHOWTIME_ID = :id AND PAYMENT_STATUS != 'REFUNDED'`,
+      { id: req.params.id }
+    );
+    if (bookingCheck.rows[0].CNT > 0) {
+      return res.status(409).json({ error: 'Cannot delete a showtime with active bookings' });
+    }
+
+    await db.execute(`DELETE FROM SHOWTIME WHERE SHOWTIME_ID = :id`, { id: req.params.id });
+    res.json({ message: 'Showtime deleted' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to delete showtime' });
+  }
+});
 
 // --- Startup ---
 

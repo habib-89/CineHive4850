@@ -19,7 +19,7 @@ export default function Auth({ onLoggedIn }) {
         ? await api.login(email, password)
         : await api.register(username, email, password);
 
-      api.saveToken(result.token);
+      api.saveSession(result.token);
       onLoggedIn();
     } catch (err) {
       setError(err.message);

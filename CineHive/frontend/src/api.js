@@ -5,12 +5,16 @@ function getToken() {
   return localStorage.getItem('cinehive_token');
 }
 
-function setToken(token) {
-  localStorage.setItem('cinehive_token', token);
+function saveSession(result) {
+  localStorage.setItem('cinehive_token', result.token);
+  localStorage.setItem('cinehive_role', result.role || 'CUSTOMER');
+  localStorage.setItem('cinehive_cinema_id', result.cinemaId ?? '');
 }
 
-function clearToken() {
+function clearSession() {
   localStorage.removeItem('cinehive_token');
+  localStorage.removeItem('cinehive_role');
+  localStorage.removeItem('cinehive_cinema_id');
 }
 
 async function request(path, options = {}) {
@@ -28,47 +32,63 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  // --- Auth ---
   register: (username, email, password) =>
     request('/auth/register', { method: 'POST', body: JSON.stringify({ username, email, password }) }),
 
   login: (email, password) =>
     request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
 
+  isLoggedIn: () => !!getToken(),
+  saveSession,
+  logout: clearSession,
+  getRole: () => localStorage.getItem('cinehive_role'),
+  isAdmin: () => localStorage.getItem('cinehive_role') === 'ADMIN',
+  getCinemaId: () => localStorage.getItem('cinehive_cinema_id'),
+
+  // --- Movies ---
   getMovies: () => request('/movies'),
-
+  getFeaturedMovies: () => request('/movies/featured'),
+  searchMovies: (q) => request(`/movies/search?q=${encodeURIComponent(q)}`),
   getMovie: (id) => request(`/movies/${id}`),
+  getCatalogByGenre: () => request('/catalog/by-genre'),
 
-  getShowtimes: (movieId) => request(`/movies/${movieId}/showtimes`),
-
-  getSeats: (showtimeId) => request(`/showtimes/${showtimeId}/seats`),
-
-  createBooking: (showtimeId, seatIds) =>
-    request('/bookings', { method: 'POST', body: JSON.stringify({ showtimeId, seatIds }) }),
-
+  // --- Cast & crew ---
   getCast: (movieId) => request(`/movies/${movieId}/cast`),
   getMovieDirectors: (movieId) => request(`/movies/${movieId}/directors`),
   getActor: (id) => request(`/actors/${id}`),
   getDirector: (id) => request(`/directors/${id}`),
-  getCatalogByGenre: () => request('/catalog/by-genre'),
-  getFeaturedMovies: () => request('/movies/featured'),
-  searchMovies: (q) => request(`/movies/search?q=${encodeURIComponent(q)}`),
 
+  // --- Showtimes & seats ---
+  getShowtimes: (movieId) => request(`/movies/${movieId}/showtimes`),
+  getSeats: (showtimeId) => request(`/showtimes/${showtimeId}/seats`),
+
+  // --- Bookings ---
+  createBooking: (showtimeId, seatIds) =>
+    request('/bookings', { method: 'POST', body: JSON.stringify({ showtimeId, seatIds }) }),
+  getMyBookings: () => request('/bookings/me'),
+  cancelBooking: (bookingId) => request(`/bookings/${bookingId}/cancel`, { method: 'POST' }),
+
+  // --- Watchlist ---
   getWatchlist: () => request('/watchlist'),
   addToWatchlist: (movieId) => request('/watchlist', { method: 'POST', body: JSON.stringify({ movieId }) }),
   removeFromWatchlist: (movieId) => request(`/watchlist/${movieId}`, { method: 'DELETE' }),
 
+  // --- Reviews & ratings ---
   getReviews: (movieId) => request(`/movies/${movieId}/reviews`),
   postReview: (movieId, reviewText) =>
     request(`/movies/${movieId}/reviews`, { method: 'POST', body: JSON.stringify({ reviewText }) }),
-
   getRating: (movieId) => request(`/movies/${movieId}/rating`),
   setRating: (movieId, ratingValue) =>
     request(`/movies/${movieId}/rating`, { method: 'POST', body: JSON.stringify({ ratingValue }) }),
 
-  cancelBooking: (bookingId) => request(`/bookings/${bookingId}/cancel`, { method: 'POST' }),
-  getMyBookings: () => request('/bookings/me'),
-
-  isLoggedIn: () => !!getToken(),
-  logout: clearToken,
-  saveToken: setToken,
+  // --- Admin ---
+  getAdminInfo: () => request('/admin/me'),
+  getAdminScreens: () => request('/admin/screens'),
+  getAdminGenres: () => request('/admin/genres'),
+  addMovie: (movie) => request('/admin/movies', { method: 'POST', body: JSON.stringify(movie) }),
+  getAdminShowtimes: () => request('/admin/showtimes'),
+  addAdminShowtime: (data) => request('/admin/showtimes', { method: 'POST', body: JSON.stringify(data) }),
+  updateAdminShowtime: (id, data) => request(`/admin/showtimes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteAdminShowtime: (id) => request(`/admin/showtimes/${id}`, { method: 'DELETE' }),
 };

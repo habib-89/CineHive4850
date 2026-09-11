@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
 import Auth from './components/Auth';
+import AdminApp from './components/AdminApp';
 import MovieList from './components/MovieList';
 import MovieDetail from './components/MovieDetail';
 import SeatPicker from './components/SeatPicker';
@@ -27,8 +28,8 @@ const savedNav = loadSavedNav();
 
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(api.isLoggedIn());
-  const [tab, setTab] = useState(savedNav?.tab ?? 'movies'); // 'movies' | 'watchlist' | 'bookings'
-  const [view, setView] = useState(savedNav?.view ?? 'list'); // 'list' | 'movie' | 'seats' | 'person'
+  const [tab, setTab] = useState(savedNav?.tab ?? 'movies');
+  const [view, setView] = useState(savedNav?.view ?? 'list');
   const [selectedMovieId, setSelectedMovieId] = useState(savedNav?.selectedMovieId ?? null);
   const [selectedShowtimeId, setSelectedShowtimeId] = useState(savedNav?.selectedShowtimeId ?? null);
   const [selectedPerson, setSelectedPerson] = useState(savedNav?.selectedPerson ?? null);
@@ -79,6 +80,10 @@ export default function App() {
 
   if (!loggedIn) {
     return <Auth onLoggedIn={() => setLoggedIn(true)} />;
+  }
+
+  if (api.isAdmin()) {
+    return <AdminApp onLogout={handleLogout} />;
   }
 
   return (
