@@ -1,0 +1,21 @@
+-- Schedules a rotating set of showtimes (screens 1 and 2) for every movie
+-- that currently has no upcoming showtime. Safe to re-run any time —
+-- it only adds showtimes for movies that have run out.
+
+INSERT INTO SHOWTIME (MOVIE_ID, SCREEN_ID, SHOW_DATE, START_TIME, END_TIME, TICKET_PRICE)
+SELECT
+  m.MOVIE_ID,
+  CASE MOD(m.MOVIE_ID, 2) WHEN 0 THEN 1 ELSE 2 END AS SCREEN_ID,
+  TRUNC(SYSDATE) + MOD(m.MOVIE_ID, 14) + 1 AS SHOW_DATE,
+  TRUNC(SYSDATE) + MOD(m.MOVIE_ID, 14) + 1 + 19/24 AS START_TIME,
+  TRUNC(SYSDATE) + MOD(m.MOVIE_ID, 14) + 1 + 19/24 + m.DURATION/1440 AS END_TIME,
+  CASE MOD(m.MOVIE_ID, 4)
+    WHEN 0 THEN 280 WHEN 1 THEN 320 WHEN 2 THEN 350 ELSE 400
+  END AS TICKET_PRICE
+FROM MOVIE m
+WHERE NOT EXISTS (
+  SELECT 1 FROM SHOWTIME st
+  WHERE st.MOVIE_ID = m.MOVIE_ID AND st.START_TIME > SYSTIMESTAMP
+);
+
+COMMIT;
