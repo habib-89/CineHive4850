@@ -28,6 +28,7 @@ const savedNav = loadSavedNav();
 
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(api.isLoggedIn());
+  const [mode, setMode] = useState(savedNav?.mode ?? 'customer'); // 'customer' | 'admin'
   const [tab, setTab] = useState(savedNav?.tab ?? 'movies');
   const [view, setView] = useState(savedNav?.view ?? 'list');
   const [selectedMovieId, setSelectedMovieId] = useState(savedNav?.selectedMovieId ?? null);
@@ -35,15 +36,17 @@ export default function App() {
   const [selectedPerson, setSelectedPerson] = useState(savedNav?.selectedPerson ?? null);
   const [activeSearch, setActiveSearch] = useState(savedNav?.activeSearch ?? '');
 
+  const isAdmin = api.isSiteAdmin() || api.isCinemaAdmin();
+
   // Persist navigation state on every change so a refresh lands back where you were.
   useEffect(() => {
-    const nav = { tab, view, selectedMovieId, selectedShowtimeId, selectedPerson, activeSearch };
+    const nav = { mode, tab, view, selectedMovieId, selectedShowtimeId, selectedPerson, activeSearch };
     try {
       sessionStorage.setItem(NAV_KEY, JSON.stringify(nav));
     } catch {
       // sessionStorage unavailable (private mode etc.) — safe to ignore, just won't persist
     }
-  }, [tab, view, selectedMovieId, selectedShowtimeId, selectedPerson, activeSearch]);
+  }, [mode, tab, view, selectedMovieId, selectedShowtimeId, selectedPerson, activeSearch]);
 
   function handleLogout() {
     api.logout();
@@ -53,6 +56,7 @@ export default function App() {
     } catch {
       // ignore
     }
+    setMode('customer');
     setTab('movies');
     setView('list');
     setSelectedMovieId(null);
@@ -82,8 +86,8 @@ export default function App() {
     return <Auth onLoggedIn={() => setLoggedIn(true)} />;
   }
 
-  if (api.isAdmin()) {
-    return <AdminApp onLogout={handleLogout} />;
+  if (mode === 'admin' && isAdmin) {
+    return <AdminApp onLogout={handleLogout} onBackToCustomer={() => setMode('customer')} />;
   }
 
   return (
@@ -102,16 +106,25 @@ export default function App() {
 
       <nav className="tab-nav">
         <button className={`tab ${tab === 'movies' ? 'active' : ''}`} onClick={() => switchTab('movies')}>Now Showing</button>
-        <button className={`tab ${tab === 'watchlist' ? 'active' : ''}`} onClick={() => switchTab('watchlist')}>Watchlist</button>
-        <button className={`tab ${tab === 'bookings' ? 'active' : ''}`} onClick={() => switchTab('bookings')}>My Bookings</button>
+        {!isAdmin && (
+          <>
+            <button className={`tab ${tab === 'watchlist' ? 'active' : ''}`} onClick={() => switchTab('watchlist')}>Watchlist</button>
+            <button className={`tab ${tab === 'bookings' ? 'active' : ''}`} onClick={() => switchTab('bookings')}>My Bookings</button>
+          </>
+        )}
+        {isAdmin && (
+          <button className="tab tab-manage" onClick={() => setMode('admin')}>
+            &#9881; {api.isCinemaAdmin() ? 'Manage Cinema' : 'Manage Movies'}
+          </button>
+        )}
       </nav>
 
       {view === 'list' && activeSearch && (
         <SearchResults query={activeSearch} onSelectMovie={goToMovie} />
       )}
       {view === 'list' && !activeSearch && tab === 'movies' && <MovieList onSelectMovie={goToMovie} />}
-      {view === 'list' && !activeSearch && tab === 'watchlist' && <Watchlist onSelectMovie={goToMovie} />}
-      {view === 'list' && !activeSearch && tab === 'bookings' && <BookingHistory />}
+      {view === 'list' && !activeSearch && !isAdmin && tab === 'watchlist' && <Watchlist onSelectMovie={goToMovie} />}
+      {view === 'list' && !activeSearch && !isAdmin && tab === 'bookings' && <BookingHistory />}
 
       {view === 'movie' && (
         <MovieDetail
@@ -119,10 +132,11 @@ export default function App() {
           onSelectShowtime={(id) => { setSelectedShowtimeId(id); setView('seats'); }}
           onSelectPerson={(id, type) => { setSelectedPerson({ id, type }); setView('person'); }}
           onBack={() => setView('list')}
+          readOnly={isAdmin}
         />
       )}
 
-      {view === 'seats' && (
+      {view === 'seats' && !isAdmin && (
         <SeatPicker
           showtimeId={selectedShowtimeId}
           onBack={() => setView('movie')}

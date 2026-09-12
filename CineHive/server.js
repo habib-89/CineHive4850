@@ -18,33 +18,62 @@ const JWT_SECRET = process.env.JWT_SECRET;
 // Expects JSON body: { username, email, password, dateOfBirth }
 // --- Auth (updated) ---
 
-// Register a new user — always as CUSTOMER, regardless of any role field sent
+// Get the list of cinemas (public — used by the sign-up form's
+// cinema picker when someone registers as a CINEMA_ADMIN)
+app.get('/cinemas', async (req, res) => {
+  try {
+    const result = await db.execute(`SELECT CINEMA_ID, CINEMA_NAME, CITY FROM CINEMA ORDER BY CINEMA_NAME`);
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch cinemas' });
+  }
+});
+
+// Register a new user as CUSTOMER, SITE_ADMIN, or CINEMA_ADMIN.
+// CINEMA_ADMIN must include a valid cinemaId.
 app.post('/auth/register', async (req, res) => {
-  const { username, email, password, dateOfBirth } = req.body;
+  const { username, email, password, dateOfBirth, role, cinemaId } = req.body;
 
   if (!username || !email || !password) {
     return res.status(400).json({ error: 'username, email, and password are required' });
   }
 
+  const chosenRole = ['CUSTOMER', 'SITE_ADMIN', 'CINEMA_ADMIN'].includes(role) ? role : 'CUSTOMER';
+
+  if (chosenRole === 'CINEMA_ADMIN' && !cinemaId) {
+    return res.status(400).json({ error: 'cinemaId is required when registering as a cinema admin' });
+  }
+
   try {
+    if (chosenRole === 'CINEMA_ADMIN') {
+      const cinemaCheck = await db.execute(`SELECT CINEMA_ID FROM CINEMA WHERE CINEMA_ID = :cinemaId`, { cinemaId });
+      if (cinemaCheck.rows.length === 0) {
+        return res.status(400).json({ error: 'Selected cinema does not exist' });
+      }
+    }
+
     const passwordHash = await bcrypt.hash(password, 10);
+    const finalCinemaId = chosenRole === 'CINEMA_ADMIN' ? cinemaId : null;
 
     const result = await db.execute(
-      `INSERT INTO APP_USER (USERNAME, EMAIL, PASSWORD_HASH, DATE_OF_BIRTH, DATE_JOINED, ROLE)
-       VALUES (:username, :email, :passwordHash, :dateOfBirth, SYSDATE, 'CUSTOMER')
+      `INSERT INTO APP_USER (USERNAME, EMAIL, PASSWORD_HASH, DATE_OF_BIRTH, DATE_JOINED, ROLE, CINEMA_ID)
+       VALUES (:username, :email, :passwordHash, :dateOfBirth, SYSDATE, :role, :cinemaId)
        RETURNING USER_ID INTO :userId`,
       {
         username,
         email,
         passwordHash,
         dateOfBirth: dateOfBirth || null,
+        role: chosenRole,
+        cinemaId: finalCinemaId,
         userId: { dir: db.oracledb.BIND_OUT, type: db.oracledb.NUMBER }
       }
     );
     const userId = result.outBinds.userId[0];
 
-    const token = jwt.sign({ userId, username, role: 'CUSTOMER', cinemaId: null }, JWT_SECRET, { expiresIn: '7d' });
-    res.status(201).json({ message: 'User registered', userId, role: 'CUSTOMER', cinemaId: null, token });
+    const token = jwt.sign({ userId, username, role: chosenRole, cinemaId: finalCinemaId }, JWT_SECRET, { expiresIn: '7d' });
+    res.status(201).json({ message: 'User registered', userId, role: chosenRole, cinemaId: finalCinemaId, token });
   } catch (err) {
     console.error(err);
     if (err.errorNum === 1) {
@@ -98,10 +127,28 @@ app.post('/auth/login', async (req, res) => {
   }
 });
 
-// Middleware: only allow ADMIN role through
-function requireAdmin(req, res, next) {
-  if (req.user.role !== 'ADMIN') {
-    return res.status(403).json({ error: 'Admin access required' });
+// Middleware: only allow the site-wide movie-catalog admin through
+function requireSiteAdmin(req, res, next) {
+  if (req.user.role !== 'SITE_ADMIN') {
+    return res.status(403).json({ error: 'Site admin access required' });
+  }
+  next();
+}
+
+// Middleware: only allow a per-cinema admin through
+function requireCinemaAdmin(req, res, next) {
+  if (req.user.role !== 'CINEMA_ADMIN') {
+    return res.status(403).json({ error: 'Cinema admin access required' });
+  }
+  next();
+}
+
+// Middleware: blocks SITE_ADMIN/CINEMA_ADMIN from customer-only actions
+// (booking, watchlist, reviews) — the frontend already hides these, this
+// is the server-side backstop.
+function requireCustomer(req, res, next) {
+  if (req.user.role !== 'CUSTOMER') {
+    return res.status(403).json({ error: 'This action is only available to customer accounts' });
   }
   next();
 }
@@ -263,7 +310,7 @@ app.get('/showtimes/:id/seats', async (req, res) => {
 
 // Create a booking with one or more seats (requires login)
 // Expects JSON body: { showtimeId, seatIds: [1,2,3] }
-app.post('/bookings', requireAuth, async (req, res) => {
+app.post('/bookings', requireAuth, requireCustomer, async (req, res) => {
   const userId = req.user.userId;
   const { showtimeId, seatIds } = req.body;
 
@@ -443,7 +490,7 @@ app.get('/directors/:id', async (req, res) => {
 // --- Watchlist (requires login) ---
 
 // Get the logged-in user's watchlist
-app.get('/watchlist', requireAuth, async (req, res) => {
+app.get('/watchlist', requireAuth, requireCustomer, async (req, res) => {
   try {
     const result = await db.execute(
       `SELECT m.MOVIE_ID, m.TITLE, m.POSTER_URL, m.DURATION, m.LANGUAGE, w.ADDED_DATE
@@ -461,7 +508,7 @@ app.get('/watchlist', requireAuth, async (req, res) => {
 });
 
 // Add a movie to the watchlist
-app.post('/watchlist', requireAuth, async (req, res) => {
+app.post('/watchlist', requireAuth, requireCustomer, async (req, res) => {
   const { movieId } = req.body;
   if (!movieId) return res.status(400).json({ error: 'movieId is required' });
 
@@ -481,7 +528,7 @@ app.post('/watchlist', requireAuth, async (req, res) => {
 });
 
 // Remove a movie from the watchlist
-app.delete('/watchlist/:movieId', requireAuth, async (req, res) => {
+app.delete('/watchlist/:movieId', requireAuth, requireCustomer, async (req, res) => {
   try {
     const result = await db.execute(
       `DELETE FROM WATCHLIST WHERE USER_ID = :userId AND MOVIE_ID = :movieId`,
@@ -515,7 +562,7 @@ app.get('/movies/:id/reviews', async (req, res) => {
 });
 
 // Post a review (requires login)
-app.post('/movies/:id/reviews', requireAuth, async (req, res) => {
+app.post('/movies/:id/reviews', requireAuth, requireCustomer, async (req, res) => {
   const { reviewText } = req.body;
   if (!reviewText) return res.status(400).json({ error: 'reviewText is required' });
 
@@ -594,7 +641,7 @@ app.post('/movies/:id/rating', requireAuth, async (req, res) => {
 // --- Booking history ---
 
 // Get the logged-in user's past bookings
-app.get('/bookings/me', requireAuth, async (req, res) => {
+app.get('/bookings/me', requireAuth, requireCustomer, async (req, res) => {
   try {
     const result = await db.execute(
       `SELECT b.BOOKING_ID, b.BOOKING_DATE, b.TOTAL_AMOUNT, b.PAYMENT_STATUS,
@@ -615,7 +662,7 @@ app.get('/bookings/me', requireAuth, async (req, res) => {
 });
 
 // Cancel a booking (only if it belongs to the user and the showtime hasn't started yet)
-app.post('/bookings/:id/cancel', requireAuth, async (req, res) => {
+app.post('/bookings/:id/cancel', requireAuth, requireCustomer, async (req, res) => {
   try {
     const bookingResult = await db.execute(
       `SELECT b.BOOKING_ID, b.USER_ID, b.PAYMENT_STATUS, st.SHOW_DATE, st.START_TIME
@@ -685,7 +732,7 @@ app.get('/catalog/by-genre', async (req, res) => {
 // --- Admin routes (all require login + ADMIN role) ---
 
 // Get the logged-in admin's own cinema info
-app.get('/admin/me', requireAuth, requireAdmin, async (req, res) => {
+app.get('/admin/me', requireAuth, requireCinemaAdmin, async (req, res) => {
   try {
     const result = await db.execute(
       `SELECT CINEMA_ID, CINEMA_NAME, ADDRESS, CITY FROM CINEMA WHERE CINEMA_ID = :cinemaId`,
@@ -702,7 +749,7 @@ app.get('/admin/me', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // Get the screens belonging to the admin's cinema (for the showtime form)
-app.get('/admin/screens', requireAuth, requireAdmin, async (req, res) => {
+app.get('/admin/screens', requireAuth, requireCinemaAdmin, async (req, res) => {
   try {
     const result = await db.execute(
       `SELECT SCREEN_ID, SCREEN_NAME, CAPACITY FROM SCREEN WHERE CINEMA_ID = :cinemaId ORDER BY SCREEN_ID`,
@@ -716,7 +763,7 @@ app.get('/admin/screens', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // Get all genres (for the Add Movie form)
-app.get('/admin/genres', requireAuth, requireAdmin, async (req, res) => {
+app.get('/admin/genres', requireAuth, requireSiteAdmin, async (req, res) => {
   try {
     const result = await db.execute(`SELECT GENRE_ID, GENRE_NAME FROM GENRE ORDER BY GENRE_NAME`);
     res.json(result.rows);
@@ -729,7 +776,7 @@ app.get('/admin/genres', requireAuth, requireAdmin, async (req, res) => {
 // Add a new movie to the shared catalog (any admin can add — movies aren't cinema-owned)
 // Expects: { title, releaseDate, duration, language, description, trailerUrl, posterUrl,
 //            genreIds: [1,2], directorName, castNames: ["Name One", "Name Two"] }
-app.post('/admin/movies', requireAuth, requireAdmin, async (req, res) => {
+app.post('/admin/movies', requireAuth, requireSiteAdmin, async (req, res) => {
   const {
     title, releaseDate, duration, language, description,
     trailerUrl, posterUrl, genreIds, directorName, castNames
@@ -832,11 +879,16 @@ app.post('/admin/movies', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // Get showtimes for the admin's own cinema
-app.get('/admin/showtimes', requireAuth, requireAdmin, async (req, res) => {
+app.get('/admin/showtimes', requireAuth, requireCinemaAdmin, async (req, res) => {
   try {
     const result = await db.execute(
-      `SELECT st.SHOWTIME_ID, st.MOVIE_ID, m.TITLE, st.SCREEN_ID, sc.SCREEN_NAME,
-              st.SHOW_DATE, st.START_TIME, st.END_TIME, st.TICKET_PRICE
+      `SELECT st.SHOWTIME_ID, st.MOVIE_ID, m.TITLE, st.SCREEN_ID, sc.SCREEN_NAME, sc.CAPACITY,
+              st.SHOW_DATE, st.START_TIME, st.END_TIME, st.TICKET_PRICE,
+              NVL((SELECT COUNT(*) FROM BOOKING_SEAT bs
+                   JOIN BOOKING b ON b.BOOKING_ID = bs.BOOKING_ID
+                   WHERE bs.SHOWTIME_ID = st.SHOWTIME_ID AND b.PAYMENT_STATUS != 'REFUNDED'), 0) AS SEATS_SOLD,
+              NVL((SELECT SUM(b.TOTAL_AMOUNT) FROM BOOKING b
+                   WHERE b.SHOWTIME_ID = st.SHOWTIME_ID AND b.PAYMENT_STATUS != 'REFUNDED'), 0) AS AMOUNT_SOLD
        FROM SHOWTIME st
        JOIN SCREEN sc ON sc.SCREEN_ID = st.SCREEN_ID
        JOIN MOVIE m ON m.MOVIE_ID = st.MOVIE_ID
@@ -851,10 +903,46 @@ app.get('/admin/showtimes', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
+// Get the full seat map for one of the admin's own showtimes, with a
+// booked/available flag per seat (read-only — for checking sales)
+app.get('/admin/showtimes/:id/seats', requireAuth, requireCinemaAdmin, async (req, res) => {
+  try {
+    const ownershipCheck = await db.execute(
+      `SELECT st.SHOWTIME_ID
+       FROM SHOWTIME st
+       JOIN SCREEN sc ON sc.SCREEN_ID = st.SCREEN_ID
+       WHERE st.SHOWTIME_ID = :id AND sc.CINEMA_ID = :cinemaId`,
+      { id: req.params.id, cinemaId: req.user.cinemaId }
+    );
+    if (ownershipCheck.rows.length === 0) {
+      return res.status(403).json({ error: 'You can only view seats for your own cinema' });
+    }
+
+    const result = await db.execute(
+      `SELECT s.SEAT_ID, s.ROW_NUMBER, s.SEAT_NUMBER, s.SEAT_TYPE,
+              CASE WHEN bs.SEAT_ID IS NOT NULL THEN 1 ELSE 0 END AS IS_BOOKED
+       FROM SEAT s
+       JOIN SHOWTIME st ON st.SCREEN_ID = s.SCREEN_ID
+       LEFT JOIN (
+         SELECT bs.SEAT_ID FROM BOOKING_SEAT bs
+         JOIN BOOKING b ON b.BOOKING_ID = bs.BOOKING_ID
+         WHERE bs.SHOWTIME_ID = :id AND b.PAYMENT_STATUS != 'REFUNDED'
+       ) bs ON bs.SEAT_ID = s.SEAT_ID
+       WHERE st.SHOWTIME_ID = :id
+       ORDER BY s.ROW_NUMBER, s.SEAT_NUMBER`,
+      { id: req.params.id }
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch seat map' });
+  }
+});
+
 // Add a showtime on one of the admin's own screens
 // Expects: { movieId, screenId, showDate, startTime, ticketPrice }
 // showDate: 'YYYY-MM-DD', startTime: 'YYYY-MM-DD HH24:MI'
-app.post('/admin/showtimes', requireAuth, requireAdmin, async (req, res) => {
+app.post('/admin/showtimes', requireAuth, requireCinemaAdmin, async (req, res) => {
   const { movieId, screenId, showDate, startTime, ticketPrice } = req.body;
 
   if (!movieId || !screenId || !showDate || !startTime || !ticketPrice) {
@@ -900,7 +988,7 @@ app.post('/admin/showtimes', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // Update a showtime's price/date/time (admin can only touch their own cinema's showtimes)
-app.put('/admin/showtimes/:id', requireAuth, requireAdmin, async (req, res) => {
+app.put('/admin/showtimes/:id', requireAuth, requireCinemaAdmin, async (req, res) => {
   const { showDate, startTime, ticketPrice } = req.body;
 
   try {
@@ -934,7 +1022,7 @@ app.put('/admin/showtimes/:id', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // Delete a showtime (only if it belongs to the admin's cinema and has no bookings yet)
-app.delete('/admin/showtimes/:id', requireAuth, requireAdmin, async (req, res) => {
+app.delete('/admin/showtimes/:id', requireAuth, requireCinemaAdmin, async (req, res) => {
   try {
     const ownershipCheck = await db.execute(
       `SELECT st.SHOWTIME_ID

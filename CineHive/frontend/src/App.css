@@ -322,7 +322,8 @@ header.marquee {
   color: var(--text-muted, #8a8794);
 }
 
-.field input {
+.field input,
+.field select {
   padding: 12px 14px;
   border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -333,7 +334,8 @@ header.marquee {
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-.field input:focus {
+.field input:focus,
+.field select:focus {
   border-color: var(--gold, #e8b86d);
   outline: none;
   box-shadow: 0 0 0 3px rgba(232, 184, 109, 0.12);
@@ -2025,4 +2027,20 @@ header.marquee {
   background: var(--bg);
   color: var(--text);
   font-size: 0.85rem;
+}
+
+.admin-seat-map-panel {
+  padding: 16px;
+  background: var(--bg-elevated-2);
+  border-radius: 8px;
+}
+
+.admin-seat-map {
+  transform: scale(0.75);
+  transform-origin: top left;
+  margin-bottom: -40px;
+}
+
+.admin-seat-map .seat {
+  cursor: default;
 }

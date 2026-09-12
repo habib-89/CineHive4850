@@ -15,7 +15,7 @@ function getYouTubeId(url) {
   }
 }
 
-export default function MovieDetail({ movieId, onSelectShowtime, onSelectPerson, onBack }) {
+export default function MovieDetail({ movieId, onSelectShowtime, onSelectPerson, onBack, readOnly }) {
   const [movie, setMovie] = useState(null);
   const [showtimes, setShowtimes] = useState([]);
   const [cast, setCast] = useState([]);
@@ -48,7 +48,7 @@ export default function MovieDetail({ movieId, onSelectShowtime, onSelectPerson,
       })
       .catch((err) => setError(err.message));
 
-    if (api.isLoggedIn()) {
+    if (!readOnly && api.isLoggedIn()) {
       api.getWatchlist()
         .then((list) => setInWatchlist(list.some((m) => m.MOVIE_ID === Number(movieId))))
         .catch(() => {});
@@ -180,10 +180,12 @@ export default function MovieDetail({ movieId, onSelectShowtime, onSelectPerson,
                   <span className="play-icon">&#9654;</span> Watch Trailer
                 </button>
               )}
-              <button className="btn-watch" onClick={scrollToShowtimes}>
-                <span className="play-icon">&#9654;</span> Book Tickets
-              </button>
-              {api.isLoggedIn() && (
+              {!readOnly && (
+                <button className="btn-watch" onClick={scrollToShowtimes}>
+                  <span className="play-icon">&#9654;</span> Book Tickets
+                </button>
+              )}
+              {!readOnly && api.isLoggedIn() && (
                 <button className={`btn-add-list ${inWatchlist ? 'active' : ''}`} onClick={toggleWatchlist}>
                   <span>{inWatchlist ? '✓' : '+'}</span> {inWatchlist ? 'In Watchlist' : 'Add to Watchlist'}
                 </button>
@@ -191,7 +193,7 @@ export default function MovieDetail({ movieId, onSelectShowtime, onSelectPerson,
             </div>
           </div>
 
-          {upcomingPreview.length > 0 && (
+          {!readOnly && upcomingPreview.length > 0 && (
             <div className="hero-side-rail">
               {upcomingPreview.map((st) => (
                 <button key={st.SHOWTIME_ID} className="hero-thumb" onClick={() => onSelectShowtime(st.SHOWTIME_ID)}>
@@ -250,28 +252,32 @@ export default function MovieDetail({ movieId, onSelectShowtime, onSelectPerson,
       )}
 
       {/* ===== Showtimes ===== */}
-      <div id="showtimes-section" className="section-heading"><h2>Showtimes</h2></div>
-      {showtimes.length === 0 && <p className="movie-meta">No showtimes scheduled.</p>}
-      <div className="showtime-list">
-        {showtimes.map((st) => (
-          <button key={st.SHOWTIME_ID} className="ticket-stub" onClick={() => onSelectShowtime(st.SHOWTIME_ID)}>
-            <div className="ticket-main">
-              <span className="ticket-date">
-                {new Date(st.SHOW_DATE).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-              </span>
-              <span className="ticket-time">
-                {new Date(st.START_TIME).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </span>
-            </div>
-            <div className="ticket-perforation" />
-            <div className="ticket-price">${st.TICKET_PRICE}</div>
-          </button>
-        ))}
-      </div>
+      {!readOnly && (
+        <>
+          <div id="showtimes-section" className="section-heading"><h2>Showtimes</h2></div>
+          {showtimes.length === 0 && <p className="movie-meta">No showtimes scheduled.</p>}
+          <div className="showtime-list">
+            {showtimes.map((st) => (
+              <button key={st.SHOWTIME_ID} className="ticket-stub" onClick={() => onSelectShowtime(st.SHOWTIME_ID)}>
+                <div className="ticket-main">
+                  <span className="ticket-date">
+                    {new Date(st.SHOW_DATE).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                  </span>
+                  <span className="ticket-time">
+                    {new Date(st.START_TIME).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
+                <div className="ticket-perforation" />
+                <div className="ticket-price">${st.TICKET_PRICE}</div>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
 
       {/* ===== Reviews ===== */}
       <div className="section-heading"><h2>Reviews</h2></div>
-      {api.isLoggedIn() && (
+      {!readOnly && api.isLoggedIn() && (
         <form onSubmit={handleReviewSubmit} className="review-form">
           <textarea
             placeholder="Share your thoughts..."

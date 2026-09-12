@@ -33,17 +33,20 @@ async function request(path, options = {}) {
 
 export const api = {
   // --- Auth ---
-  register: (username, email, password) =>
-    request('/auth/register', { method: 'POST', body: JSON.stringify({ username, email, password }) }),
+  register: (username, email, password, role, cinemaId) =>
+    request('/auth/register', { method: 'POST', body: JSON.stringify({ username, email, password, role, cinemaId }) }),
 
   login: (email, password) =>
     request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+
+  getCinemas: () => request('/cinemas'),
 
   isLoggedIn: () => !!getToken(),
   saveSession,
   logout: clearSession,
   getRole: () => localStorage.getItem('cinehive_role'),
-  isAdmin: () => localStorage.getItem('cinehive_role') === 'ADMIN',
+  isSiteAdmin: () => localStorage.getItem('cinehive_role') === 'SITE_ADMIN',
+  isCinemaAdmin: () => localStorage.getItem('cinehive_role') === 'CINEMA_ADMIN',
   getCinemaId: () => localStorage.getItem('cinehive_cinema_id'),
 
   // --- Movies ---
@@ -88,6 +91,7 @@ export const api = {
   getAdminGenres: () => request('/admin/genres'),
   addMovie: (movie) => request('/admin/movies', { method: 'POST', body: JSON.stringify(movie) }),
   getAdminShowtimes: () => request('/admin/showtimes'),
+  getAdminShowtimeSeats: (id) => request(`/admin/showtimes/${id}/seats`),
   addAdminShowtime: (data) => request('/admin/showtimes', { method: 'POST', body: JSON.stringify(data) }),
   updateAdminShowtime: (id, data) => request(`/admin/showtimes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteAdminShowtime: (id) => request(`/admin/showtimes/${id}`, { method: 'DELETE' }),

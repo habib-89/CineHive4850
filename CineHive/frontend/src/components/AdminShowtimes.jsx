@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { api } from '../api';
 
 const STATE_KEY = 'cinehive_admin_showtimes_state';
@@ -28,6 +28,11 @@ export default function AdminShowtimes() {
 
   const [newForm, setNewForm] = useState(saved?.newForm ?? emptyNewForm);
   const [adding, setAdding] = useState(false);
+
+  const [viewingSeatsId, setViewingSeatsId] = useState(null);
+  const [seatMap, setSeatMap] = useState([]);
+  const [seatMapLoading, setSeatMapLoading] = useState(false);
+  const [seatMapError, setSeatMapError] = useState('');
 
   useEffect(() => {
     load();
@@ -119,6 +124,26 @@ export default function AdminShowtimes() {
     }
   }
 
+  async function toggleSeatView(showtimeId) {
+    if (viewingSeatsId === showtimeId) {
+      setViewingSeatsId(null);
+      return;
+    }
+    setViewingSeatsId(showtimeId);
+    setSeatMapLoading(true);
+    setSeatMapError('');
+    try {
+      const data = await api.getAdminShowtimeSeats(showtimeId);
+      setSeatMap(data);
+    } catch (err) {
+      setSeatMapError(err.message);
+    } finally {
+      setSeatMapLoading(false);
+    }
+  }
+
+  const totalRevenue = showtimes.reduce((sum, st) => sum + (st.AMOUNT_SOLD || 0), 0);
+
   return (
     <div>
       <div className="section-heading"><h2>Add a Showtime</h2></div>
@@ -157,56 +182,108 @@ export default function AdminShowtimes() {
         <button type="submit" className="btn-primary" disabled={adding}>{adding ? 'Adding...' : 'Add Showtime'}</button>
       </form>
 
-      <div className="section-heading"><h2>Your Showtimes</h2></div>
+      <div className="section-heading">
+        <h2>Your Showtimes</h2>
+        <span className="count">Total revenue: ${totalRevenue.toLocaleString()}</span>
+      </div>
       {loading && <p>Loading...</p>}
       {!loading && showtimes.length === 0 && <p className="movie-meta">No showtimes yet.</p>}
 
       <table className="admin-table">
         <thead>
           <tr>
-            <th>Movie</th><th>Screen</th><th>Date</th><th>Time</th><th>Price</th><th></th>
+            <th>Movie</th><th>Screen</th><th>Date</th><th>Time</th><th>Price</th><th>Sold</th><th>Revenue</th><th></th>
           </tr>
         </thead>
         <tbody>
           {showtimes.map((st) => (
-            <tr key={st.SHOWTIME_ID}>
-              {editingId === st.SHOWTIME_ID ? (
-                <>
-                  <td>{st.TITLE}</td>
-                  <td>{st.SCREEN_NAME}</td>
-                  <td>
-                    <input type="date" value={editForm.showDate}
-                      onChange={(e) => setEditForm({ ...editForm, showDate: e.target.value, startTime: `${e.target.value} ${editForm.startTime.split(' ')[1] || ''}` })} />
+            <Fragment key={st.SHOWTIME_ID}>
+              <tr>
+                {editingId === st.SHOWTIME_ID ? (
+                  <>
+                    <td>{st.TITLE}</td>
+                    <td>{st.SCREEN_NAME}</td>
+                    <td>
+                      <input type="date" value={editForm.showDate}
+                        onChange={(e) => setEditForm({ ...editForm, showDate: e.target.value, startTime: `${e.target.value} ${editForm.startTime.split(' ')[1] || ''}` })} />
+                    </td>
+                    <td>
+                      <input type="time" value={editForm.startTime.split(' ')[1]?.slice(0, 5) || ''}
+                        onChange={(e) => setEditForm({ ...editForm, startTime: `${editForm.showDate} ${e.target.value}` })} />
+                    </td>
+                    <td>
+                      <input type="number" value={editForm.ticketPrice} style={{ width: '70px' }}
+                        onChange={(e) => setEditForm({ ...editForm, ticketPrice: e.target.value })} />
+                    </td>
+                    <td>{st.SEATS_SOLD}/{st.CAPACITY}</td>
+                    <td>${st.AMOUNT_SOLD}</td>
+                    <td>
+                      <button className="link-button small" onClick={() => saveEdit(st.SHOWTIME_ID)}>Save</button>
+                      {' '}
+                      <button className="link-button small" onClick={cancelEdit}>Cancel</button>
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td>{st.TITLE}</td>
+                    <td>{st.SCREEN_NAME}</td>
+                    <td>{new Date(st.SHOW_DATE).toLocaleDateString()}</td>
+                    <td>{new Date(st.START_TIME).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+                    <td>${st.TICKET_PRICE}</td>
+                    <td>{st.SEATS_SOLD}/{st.CAPACITY}</td>
+                    <td>${st.AMOUNT_SOLD}</td>
+                    <td>
+                      <button className="link-button small" onClick={() => toggleSeatView(st.SHOWTIME_ID)}>
+                        {viewingSeatsId === st.SHOWTIME_ID ? 'Hide Seats' : 'View Seats'}
+                      </button>
+                      {' '}
+                      <button className="link-button small" onClick={() => startEdit(st)}>Edit</button>
+                      {' '}
+                      <button className="link-button small cancel-link" onClick={() => handleDelete(st.SHOWTIME_ID)}>Delete</button>
+                    </td>
+                  </>
+                )}
+              </tr>
+              {viewingSeatsId === st.SHOWTIME_ID && (
+                <tr>
+                  <td colSpan={8}>
+                    <div className="admin-seat-map-panel">
+                      {seatMapLoading && <p>Loading seat map...</p>}
+                      {seatMapError && <p className="error">{seatMapError}</p>}
+                      {!seatMapLoading && !seatMapError && (
+                        <>
+                          <div className="seat-legend">
+                            <span className="legend-item"><span className="legend-swatch" /> Available</span>
+                            <span className="legend-item"><span className="legend-swatch selected" /> Booked</span>
+                          </div>
+                          <div className="seat-map admin-seat-map">
+                            {Object.entries(
+                              seatMap.reduce((acc, seat) => {
+                                (acc[seat.ROW_NUMBER] ||= []).push(seat);
+                                return acc;
+                              }, {})
+                            ).map(([row, rowSeats]) => (
+                              <div key={row} className="seat-row">
+                                <span className="row-label">{row}</span>
+                                {rowSeats.map((seat) => (
+                                  <span
+                                    key={seat.SEAT_ID}
+                                    className={`seat seat-${seat.SEAT_TYPE?.toLowerCase()} ${seat.IS_BOOKED ? 'selected' : ''}`}
+                                    title={`${seat.SEAT_TYPE} - Seat ${seat.SEAT_NUMBER} - ${seat.IS_BOOKED ? 'Booked' : 'Available'}`}
+                                  >
+                                    {seat.SEAT_NUMBER}
+                                  </span>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
                   </td>
-                  <td>
-                    <input type="time" value={editForm.startTime.split(' ')[1]?.slice(0, 5) || ''}
-                      onChange={(e) => setEditForm({ ...editForm, startTime: `${editForm.showDate} ${e.target.value}` })} />
-                  </td>
-                  <td>
-                    <input type="number" value={editForm.ticketPrice} style={{ width: '70px' }}
-                      onChange={(e) => setEditForm({ ...editForm, ticketPrice: e.target.value })} />
-                  </td>
-                  <td>
-                    <button className="link-button small" onClick={() => saveEdit(st.SHOWTIME_ID)}>Save</button>
-                    {' '}
-                    <button className="link-button small" onClick={cancelEdit}>Cancel</button>
-                  </td>
-                </>
-              ) : (
-                <>
-                  <td>{st.TITLE}</td>
-                  <td>{st.SCREEN_NAME}</td>
-                  <td>{new Date(st.SHOW_DATE).toLocaleDateString()}</td>
-                  <td>{new Date(st.START_TIME).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
-                  <td>${st.TICKET_PRICE}</td>
-                  <td>
-                    <button className="link-button small" onClick={() => startEdit(st)}>Edit</button>
-                    {' '}
-                    <button className="link-button small cancel-link" onClick={() => handleDelete(st.SHOWTIME_ID)}>Delete</button>
-                  </td>
-                </>
+                </tr>
               )}
-            </tr>
+            </Fragment>
           ))}
         </tbody>
       </table>
