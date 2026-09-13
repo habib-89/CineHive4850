@@ -11,6 +11,7 @@ app.use(cors());
 app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET;
+const SITE_ADMIN_SECRET = process.env.SITE_ADMIN_SECRET_CODE;
 
 // --- Auth routes ---
 
@@ -33,7 +34,7 @@ app.get('/cinemas', async (req, res) => {
 // Register a new user as CUSTOMER, SITE_ADMIN, or CINEMA_ADMIN.
 // CINEMA_ADMIN must include a valid cinemaId.
 app.post('/auth/register', async (req, res) => {
-  const { username, email, password, dateOfBirth, role, cinemaId } = req.body;
+  const { username, email, password, dateOfBirth, role, cinemaId, secretCode } = req.body;
 
   if (!username || !email || !password) {
     return res.status(400).json({ error: 'username, email, and password are required' });
@@ -43,6 +44,15 @@ app.post('/auth/register', async (req, res) => {
 
   if (chosenRole === 'CINEMA_ADMIN' && !cinemaId) {
     return res.status(400).json({ error: 'cinemaId is required when registering as a cinema admin' });
+  }
+
+  if (chosenRole === 'SITE_ADMIN') {
+    if (!SITE_ADMIN_SECRET) {
+      return res.status(500).json({ error: 'Site admin registration is not configured' });
+    }
+    if (secretCode !== SITE_ADMIN_SECRET) {
+      return res.status(403).json({ error: 'Incorrect site admin secret code' });
+    }
   }
 
   try {
@@ -55,10 +65,13 @@ app.post('/auth/register', async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 10);
     const finalCinemaId = chosenRole === 'CINEMA_ADMIN' ? cinemaId : null;
+    // Cinema admins need site-admin approval before they can log in.
+    // Customers and site admins (gated by the secret code above) are approved immediately.
+    const isApproved = chosenRole === 'CINEMA_ADMIN' ? 0 : 1;
 
     const result = await db.execute(
-      `INSERT INTO APP_USER (USERNAME, EMAIL, PASSWORD_HASH, DATE_OF_BIRTH, DATE_JOINED, ROLE, CINEMA_ID)
-       VALUES (:username, :email, :passwordHash, :dateOfBirth, SYSDATE, :role, :cinemaId)
+      `INSERT INTO APP_USER (USERNAME, EMAIL, PASSWORD_HASH, DATE_OF_BIRTH, DATE_JOINED, ROLE, CINEMA_ID, IS_APPROVED)
+       VALUES (:username, :email, :passwordHash, :dateOfBirth, SYSDATE, :role, :cinemaId, :isApproved)
        RETURNING USER_ID INTO :userId`,
       {
         username,
@@ -67,10 +80,19 @@ app.post('/auth/register', async (req, res) => {
         dateOfBirth: dateOfBirth || null,
         role: chosenRole,
         cinemaId: finalCinemaId,
+        isApproved,
         userId: { dir: db.oracledb.BIND_OUT, type: db.oracledb.NUMBER }
       }
     );
     const userId = result.outBinds.userId[0];
+
+    if (!isApproved) {
+      // Don't issue a token — this account can't log in until a site admin approves it.
+      return res.status(201).json({
+        message: 'Account created. A site admin must approve your cinema admin account before you can log in.',
+        pending: true,
+      });
+    }
 
     const token = jwt.sign({ userId, username, role: chosenRole, cinemaId: finalCinemaId }, JWT_SECRET, { expiresIn: '7d' });
     res.status(201).json({ message: 'User registered', userId, role: chosenRole, cinemaId: finalCinemaId, token });
@@ -93,7 +115,7 @@ app.post('/auth/login', async (req, res) => {
 
   try {
     const result = await db.execute(
-      `SELECT USER_ID, USERNAME, PASSWORD_HASH, ROLE, CINEMA_ID FROM APP_USER WHERE EMAIL = :email`,
+      `SELECT USER_ID, USERNAME, PASSWORD_HASH, ROLE, CINEMA_ID, IS_APPROVED FROM APP_USER WHERE EMAIL = :email`,
       { email }
     );
 
@@ -106,6 +128,10 @@ app.post('/auth/login', async (req, res) => {
 
     if (!match) {
       return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    if (user.IS_APPROVED === 0) {
+      return res.status(403).json({ error: 'Your cinema admin account is pending approval from a site admin.' });
     }
 
     const token = jwt.sign(
@@ -763,6 +789,182 @@ app.get('/admin/screens', requireAuth, requireCinemaAdmin, async (req, res) => {
 });
 
 // Get all genres (for the Add Movie form)
+// Get pending cinema admin sign-ups awaiting approval
+app.get('/admin/pending-cinema-admins', requireAuth, requireSiteAdmin, async (req, res) => {
+  try {
+    const result = await db.execute(
+      `SELECT u.USER_ID, u.USERNAME, u.EMAIL, u.DATE_JOINED, c.CINEMA_NAME, c.CITY
+       FROM APP_USER u
+       JOIN CINEMA c ON c.CINEMA_ID = u.CINEMA_ID
+       WHERE u.ROLE = 'CINEMA_ADMIN' AND u.IS_APPROVED = 0
+       ORDER BY u.DATE_JOINED`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch pending cinema admins' });
+  }
+});
+
+// Approve a pending cinema admin
+app.post('/admin/pending-cinema-admins/:userId/approve', requireAuth, requireSiteAdmin, async (req, res) => {
+  try {
+    const result = await db.execute(
+      `UPDATE APP_USER SET IS_APPROVED = 1 WHERE USER_ID = :userId AND ROLE = 'CINEMA_ADMIN' AND IS_APPROVED = 0`,
+      { userId: req.params.userId }
+    );
+    if (result.rowsAffected === 0) {
+      return res.status(404).json({ error: 'No matching pending cinema admin found' });
+    }
+    res.json({ message: 'Cinema admin approved' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to approve cinema admin' });
+  }
+});
+
+// Reject (delete) a pending cinema admin sign-up
+app.delete('/admin/pending-cinema-admins/:userId', requireAuth, requireSiteAdmin, async (req, res) => {
+  try {
+    const result = await db.execute(
+      `DELETE FROM APP_USER WHERE USER_ID = :userId AND ROLE = 'CINEMA_ADMIN' AND IS_APPROVED = 0`,
+      { userId: req.params.userId }
+    );
+    if (result.rowsAffected === 0) {
+      return res.status(404).json({ error: 'No matching pending cinema admin found' });
+    }
+    res.json({ message: 'Sign-up rejected' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to reject cinema admin' });
+  }
+});
+
+// --- Site admin: customer oversight ---
+
+// List all customers with aggregate activity counts
+app.get('/admin/customers', requireAuth, requireSiteAdmin, async (req, res) => {
+  try {
+    const result = await db.execute(
+      `SELECT u.USER_ID, u.USERNAME, u.EMAIL, u.DATE_JOINED,
+              NVL((SELECT COUNT(*) FROM BOOKING b WHERE b.USER_ID = u.USER_ID AND b.PAYMENT_STATUS != 'REFUNDED'), 0) AS BOOKING_COUNT,
+              NVL((SELECT SUM(b.TOTAL_AMOUNT) FROM BOOKING b WHERE b.USER_ID = u.USER_ID AND b.PAYMENT_STATUS != 'REFUNDED'), 0) AS TOTAL_SPENT,
+              NVL((SELECT COUNT(*) FROM REVIEW r WHERE r.USER_ID = u.USER_ID), 0) AS REVIEW_COUNT,
+              NVL((SELECT COUNT(*) FROM RATING rt WHERE rt.USER_ID = u.USER_ID), 0) AS RATING_COUNT
+       FROM APP_USER u
+       WHERE u.ROLE = 'CUSTOMER'
+       ORDER BY u.DATE_JOINED DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch customers' });
+  }
+});
+
+// Full activity detail for one customer: bookings, reviews, ratings
+app.get('/admin/customers/:id/activity', requireAuth, requireSiteAdmin, async (req, res) => {
+  try {
+    const bookings = await db.execute(
+      `SELECT b.BOOKING_ID, m.TITLE, st.SHOW_DATE, st.START_TIME, b.TOTAL_AMOUNT, b.PAYMENT_STATUS, b.BOOKING_DATE
+       FROM BOOKING b
+       JOIN SHOWTIME st ON st.SHOWTIME_ID = b.SHOWTIME_ID
+       JOIN MOVIE m ON m.MOVIE_ID = st.MOVIE_ID
+       WHERE b.USER_ID = :id
+       ORDER BY b.BOOKING_DATE DESC`,
+      { id: req.params.id }
+    );
+    const reviews = await db.execute(
+      `SELECT r.REVIEW_ID, m.TITLE, r.REVIEW_TEXT, r.REVIEW_DATE
+       FROM REVIEW r JOIN MOVIE m ON m.MOVIE_ID = r.MOVIE_ID
+       WHERE r.USER_ID = :id
+       ORDER BY r.REVIEW_DATE DESC`,
+      { id: req.params.id }
+    );
+    const ratings = await db.execute(
+      `SELECT m.TITLE, rt.RATING_VALUE, rt.RATING_DATE
+       FROM RATING rt JOIN MOVIE m ON m.MOVIE_ID = rt.MOVIE_ID
+       WHERE rt.USER_ID = :id
+       ORDER BY rt.RATING_DATE DESC`,
+      { id: req.params.id }
+    );
+    res.json({ bookings: bookings.rows, reviews: reviews.rows, ratings: ratings.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch customer activity' });
+  }
+});
+
+// --- Site admin: full cinema admin management ---
+
+// List every cinema admin account (pending and approved)
+app.get('/admin/cinema-admins', requireAuth, requireSiteAdmin, async (req, res) => {
+  try {
+    const result = await db.execute(
+      `SELECT u.USER_ID, u.USERNAME, u.EMAIL, u.DATE_JOINED, u.IS_APPROVED, c.CINEMA_NAME, c.CITY
+       FROM APP_USER u
+       JOIN CINEMA c ON c.CINEMA_ID = u.CINEMA_ID
+       WHERE u.ROLE = 'CINEMA_ADMIN'
+       ORDER BY u.IS_APPROVED, u.DATE_JOINED DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch cinema admins' });
+  }
+});
+
+// Approve (or re-approve) a cinema admin
+app.post('/admin/cinema-admins/:userId/approve', requireAuth, requireSiteAdmin, async (req, res) => {
+  try {
+    const result = await db.execute(
+      `UPDATE APP_USER SET IS_APPROVED = 1 WHERE USER_ID = :userId AND ROLE = 'CINEMA_ADMIN'`,
+      { userId: req.params.userId }
+    );
+    if (result.rowsAffected === 0) {
+      return res.status(404).json({ error: 'Cinema admin not found' });
+    }
+    res.json({ message: 'Cinema admin approved' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to approve cinema admin' });
+  }
+});
+
+// Revoke an already-approved cinema admin's access (they can't log in until re-approved)
+app.post('/admin/cinema-admins/:userId/revoke', requireAuth, requireSiteAdmin, async (req, res) => {
+  try {
+    const result = await db.execute(
+      `UPDATE APP_USER SET IS_APPROVED = 0 WHERE USER_ID = :userId AND ROLE = 'CINEMA_ADMIN'`,
+      { userId: req.params.userId }
+    );
+    if (result.rowsAffected === 0) {
+      return res.status(404).json({ error: 'Cinema admin not found' });
+    }
+    res.json({ message: 'Cinema admin access revoked' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to revoke cinema admin' });
+  }
+});
+
+// Permanently delete a cinema admin account
+app.delete('/admin/cinema-admins/:userId', requireAuth, requireSiteAdmin, async (req, res) => {
+  try {
+    const result = await db.execute(
+      `DELETE FROM APP_USER WHERE USER_ID = :userId AND ROLE = 'CINEMA_ADMIN'`,
+      { userId: req.params.userId }
+    );
+    if (result.rowsAffected === 0) {
+      return res.status(404).json({ error: 'Cinema admin not found' });
+    }
+    res.json({ message: 'Cinema admin account deleted' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to delete cinema admin' });
+  }
+});
+
 app.get('/admin/genres', requireAuth, requireSiteAdmin, async (req, res) => {
   try {
     const result = await db.execute(`SELECT GENRE_ID, GENRE_NAME FROM GENRE ORDER BY GENRE_NAME`);

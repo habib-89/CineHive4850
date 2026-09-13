@@ -2,10 +2,14 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import AdminAddMovie from './AdminAddMovie';
 import AdminShowtimes from './AdminShowtimes';
+import AdminCinemaAdmins from './AdminCinemaAdmins';
+import AdminCustomers from './AdminCustomers';
 
 export default function AdminApp({ onLogout, onBackToCustomer }) {
   const isCinemaAdmin = api.isCinemaAdmin();
+  const isSiteAdmin = api.isSiteAdmin();
   const [cinema, setCinema] = useState(null);
+  const [tab, setTab] = useState('addmovie'); // only relevant for site admin
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -30,7 +34,24 @@ export default function AdminApp({ onLogout, onBackToCustomer }) {
 
       {error && <p className="error">{error}</p>}
 
-      {isCinemaAdmin ? <AdminShowtimes /> : <AdminAddMovie />}
+      {isSiteAdmin && (
+        <nav className="tab-nav">
+          <button className={`tab ${tab === 'addmovie' ? 'active' : ''}`} onClick={() => setTab('addmovie')}>
+            Add Movie
+          </button>
+          <button className={`tab ${tab === 'cinemaadmins' ? 'active' : ''}`} onClick={() => setTab('cinemaadmins')}>
+            Cinema Admins
+          </button>
+          <button className={`tab ${tab === 'customers' ? 'active' : ''}`} onClick={() => setTab('customers')}>
+            Customers
+          </button>
+        </nav>
+      )}
+
+      {isCinemaAdmin && <AdminShowtimes />}
+      {isSiteAdmin && tab === 'addmovie' && <AdminAddMovie />}
+      {isSiteAdmin && tab === 'cinemaadmins' && <AdminCinemaAdmins />}
+      {isSiteAdmin && tab === 'customers' && <AdminCustomers />}
     </div>
   );
 }

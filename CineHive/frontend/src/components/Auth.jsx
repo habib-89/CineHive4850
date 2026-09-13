@@ -9,8 +9,10 @@ export default function Auth({ onLoggedIn }) {
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('CUSTOMER');
   const [cinemaId, setCinemaId] = useState('');
+  const [secretCode, setSecretCode] = useState('');
   const [cinemas, setCinemas] = useState([]);
   const [error, setError] = useState('');
+  const [pendingMessage, setPendingMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -22,11 +24,22 @@ export default function Auth({ onLoggedIn }) {
   async function handleSubmit(e) {
     e.preventDefault();
     setError('');
+    setPendingMessage('');
     setLoading(true);
     try {
       const result = mode === 'login'
         ? await api.login(email, password)
-        : await api.register(username, email, password, role, role === 'CINEMA_ADMIN' ? cinemaId : undefined);
+        : await api.register(
+            username, email, password, role,
+            role === 'CINEMA_ADMIN' ? cinemaId : undefined,
+            role === 'SITE_ADMIN' ? secretCode : undefined
+          );
+
+      if (result.pending) {
+        setPendingMessage(result.message);
+        setMode('login');
+        return;
+      }
 
       api.saveSession(result);
       onLoggedIn();
@@ -96,6 +109,19 @@ export default function Auth({ onLoggedIn }) {
                   </select>
                 </div>
               )}
+
+              {role === 'SITE_ADMIN' && (
+                <div className="field">
+                  <label>Site Admin Secret Code</label>
+                  <input
+                    type="password"
+                    placeholder="Enter the secret code"
+                    value={secretCode}
+                    onChange={(e) => setSecretCode(e.target.value)}
+                    required
+                  />
+                </div>
+              )}
             </>
           )}
           <div className="field">
@@ -120,6 +146,7 @@ export default function Auth({ onLoggedIn }) {
           </div>
 
           {error && <p className="error">{error}</p>}
+          {pendingMessage && <p className="success-msg">{pendingMessage}</p>}
 
           <button type="submit" className="btn-gold" disabled={loading}>
             {loading ? 'Please wait...' : mode === 'login' ? 'Sign In' : 'Create Account'}

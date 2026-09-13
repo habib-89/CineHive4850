@@ -35,6 +35,8 @@ export const api = {
   // --- Auth ---
   register: (username, email, password, role, cinemaId) =>
     request('/auth/register', { method: 'POST', body: JSON.stringify({ username, email, password, role, cinemaId }) }),
+  register: (username, email, password, role, cinemaId, secretCode) =>
+    request('/auth/register', { method: 'POST', body: JSON.stringify({ username, email, password, role, cinemaId, secretCode }) }),
 
   login: (email, password) =>
     request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),

@@ -2044,3 +2044,35 @@ header.marquee {
 .admin-seat-map .seat {
   cursor: default;
 }
+
+.admin-activity-panel {
+  padding: 16px;
+  background: var(--bg-elevated-2);
+  border-radius: 8px;
+}
+
+.admin-activity-panel h4 {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin: 14px 0 8px;
+}
+
+.admin-activity-panel h4:first-child {
+  margin-top: 0;
+}
+
+.activity-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+.activity-row:last-of-type {
+  border-bottom: none;
+}
