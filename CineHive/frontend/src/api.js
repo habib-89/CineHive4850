@@ -33,8 +33,6 @@ async function request(path, options = {}) {
 
 export const api = {
   // --- Auth ---
-  register: (username, email, password, role, cinemaId) =>
-    request('/auth/register', { method: 'POST', body: JSON.stringify({ username, email, password, role, cinemaId }) }),
   register: (username, email, password, role, cinemaId, secretCode) =>
     request('/auth/register', { method: 'POST', body: JSON.stringify({ username, email, password, role, cinemaId, secretCode }) }),
 
@@ -91,10 +89,23 @@ export const api = {
   getAdminInfo: () => request('/admin/me'),
   getAdminScreens: () => request('/admin/screens'),
   getAdminGenres: () => request('/admin/genres'),
+  getPendingCinemaAdmins: () => request('/admin/pending-cinema-admins'),
+  approvePendingCinemaAdmin: (userId) => request(`/admin/pending-cinema-admins/${userId}/approve`, { method: 'POST' }),
+  rejectPendingCinemaAdmin: (userId) => request(`/admin/pending-cinema-admins/${userId}`, { method: 'DELETE' }),
   addMovie: (movie) => request('/admin/movies', { method: 'POST', body: JSON.stringify(movie) }),
   getAdminShowtimes: () => request('/admin/showtimes'),
   getAdminShowtimeSeats: (id) => request(`/admin/showtimes/${id}/seats`),
   addAdminShowtime: (data) => request('/admin/showtimes', { method: 'POST', body: JSON.stringify(data) }),
   updateAdminShowtime: (id, data) => request(`/admin/showtimes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteAdminShowtime: (id) => request(`/admin/showtimes/${id}`, { method: 'DELETE' }),
+
+  // --- Site admin: customer oversight ---
+  getCustomers: () => request('/admin/customers'),
+  getCustomerActivity: (id) => request(`/admin/customers/${id}/activity`),
+
+  // --- Site admin: full cinema admin management ---
+  getCinemaAdmins: () => request('/admin/cinema-admins'),
+  approveCinemaAdmin: (userId) => request(`/admin/cinema-admins/${userId}/approve`, { method: 'POST' }),
+  revokeCinemaAdmin: (userId) => request(`/admin/cinema-admins/${userId}/revoke`, { method: 'POST' }),
+  deleteCinemaAdmin: (userId) => request(`/admin/cinema-admins/${userId}`, { method: 'DELETE' }),
 };
