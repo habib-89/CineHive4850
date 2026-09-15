@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 
 const STATE_KEY = 'cinehive_admin_showtimes_state';
@@ -29,6 +29,11 @@ export default function AdminShowtimes() {
   const [newForm, setNewForm] = useState(saved?.newForm ?? emptyNewForm);
   const [adding, setAdding] = useState(false);
 
+  const [movieQuery, setMovieQuery] = useState('');
+  const [movieDropdownOpen, setMovieDropdownOpen] = useState(false);
+  const movieFieldRef = useRef(null);
+  const movieQueryInitialized = useRef(false);
+
   const [viewingSeatsId, setViewingSeatsId] = useState(null);
   const [seatMap, setSeatMap] = useState([]);
   const [seatMapLoading, setSeatMapLoading] = useState(false);
@@ -39,6 +44,48 @@ export default function AdminShowtimes() {
     api.getAdminScreens().then(setScreens).catch(() => {});
     api.getMovies().then(setMovies).catch(() => {});
   }, []);
+
+  // If a movie was already selected (e.g. restored from a saved form),
+  // pre-fill the search box with its title once the movie list arrives.
+  useEffect(() => {
+    if (movieQueryInitialized.current) return;
+    if (!newForm.movieId || movies.length === 0) return;
+    const match = movies.find((m) => String(m.MOVIE_ID) === String(newForm.movieId));
+    if (match) {
+      setMovieQuery(match.TITLE);
+      movieQueryInitialized.current = true;
+    }
+  }, [movies, newForm.movieId]);
+
+  // Close the movie search dropdown when clicking outside it.
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (movieFieldRef.current && !movieFieldRef.current.contains(e.target)) {
+        setMovieDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const filteredMovies = movieQuery.trim()
+    ? movies.filter((m) => m.TITLE.toUpperCase().includes(movieQuery.trim().toUpperCase()))
+    : movies;
+
+  function pickMovie(movie) {
+    setNewForm({ ...newForm, movieId: movie.MOVIE_ID });
+    setMovieQuery(movie.TITLE);
+    setMovieDropdownOpen(false);
+  }
+
+  function handleMovieQueryChange(value) {
+    setMovieQuery(value);
+    setMovieDropdownOpen(true);
+    // Typing invalidates whatever was previously selected until they pick again.
+    if (newForm.movieId) {
+      setNewForm({ ...newForm, movieId: '' });
+    }
+  }
 
   // Persist the add-form and any in-progress edit so a refresh doesn't lose either.
   useEffect(() => {
@@ -105,6 +152,10 @@ export default function AdminShowtimes() {
 
   async function handleAdd(e) {
     e.preventDefault();
+    if (!newForm.movieId) {
+      setError('Please pick a movie from the search results.');
+      return;
+    }
     setAdding(true);
     setError('');
     try {
@@ -116,6 +167,8 @@ export default function AdminShowtimes() {
         ticketPrice: newForm.ticketPrice,
       });
       setNewForm(emptyNewForm);
+      setMovieQuery('');
+      movieQueryInitialized.current = true;
       load();
     } catch (err) {
       setError(err.message);
@@ -151,10 +204,40 @@ export default function AdminShowtimes() {
         <div className="admin-form-row">
           <div className="field">
             <label>Movie</label>
-            <select value={newForm.movieId} onChange={(e) => setNewForm({ ...newForm, movieId: e.target.value })} required>
-              <option value="">Select a movie</option>
-              {movies.map((m) => <option key={m.MOVIE_ID} value={m.MOVIE_ID}>{m.TITLE}</option>)}
-            </select>
+            <div className="search-bar admin-movie-search" ref={movieFieldRef}>
+              <input
+                type="text"
+                placeholder="Search movies by title..."
+                value={movieQuery}
+                onChange={(e) => handleMovieQueryChange(e.target.value)}
+                onFocus={() => setMovieDropdownOpen(true)}
+              />
+              {movieDropdownOpen && (
+                <div className="search-dropdown">
+                  {filteredMovies.length === 0 && (
+                    <div className="search-dropdown-empty">No movies match "{movieQuery}"</div>
+                  )}
+                  {filteredMovies.map((m) => (
+                    <button
+                      type="button"
+                      key={m.MOVIE_ID}
+                      className="search-dropdown-item"
+                      onClick={() => pickMovie(m)}
+                    >
+                      {m.POSTER_URL
+                        ? <img src={m.POSTER_URL} alt="" className="search-dropdown-thumb" />
+                        : <span className="search-dropdown-thumb-placeholder" />}
+                      <span className="search-dropdown-info">
+                        <span className="search-dropdown-title">{m.TITLE}</span>
+                        <span className="search-dropdown-meta">
+                          {m.RELEASE_DATE ? new Date(m.RELEASE_DATE).getFullYear() : ''} &middot; {m.LANGUAGE}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
           <div className="field">
             <label>Screen</label>
@@ -192,11 +275,13 @@ export default function AdminShowtimes() {
       <table className="admin-table">
         <thead>
           <tr>
-            <th>Movie</th><th>Screen</th><th>Date</th><th>Time</th><th>Price</th><th>Sold</th><th>Revenue</th><th></th>
+            <th>Movie</th><th>Screen</th><th>Date</th><th>Time</th><th>Status</th><th>Price</th><th>Sold</th><th>Revenue</th><th></th>
           </tr>
         </thead>
         <tbody>
-          {showtimes.map((st) => (
+          {showtimes.map((st) => {
+            const alreadyShown = new Date(st.START_TIME) <= new Date();
+            return (
             <Fragment key={st.SHOWTIME_ID}>
               <tr>
                 {editingId === st.SHOWTIME_ID ? (
@@ -210,6 +295,11 @@ export default function AdminShowtimes() {
                     <td>
                       <input type="time" value={editForm.startTime.split(' ')[1]?.slice(0, 5) || ''}
                         onChange={(e) => setEditForm({ ...editForm, startTime: `${editForm.showDate} ${e.target.value}` })} />
+                    </td>
+                    <td>
+                      <span className={`status-badge ${alreadyShown ? 'status-shown' : 'status-upcoming'}`}>
+                        {alreadyShown ? 'Already Shown' : 'Upcoming'}
+                      </span>
                     </td>
                     <td>
                       <input type="number" value={editForm.ticketPrice} style={{ width: '70px' }}
@@ -229,6 +319,11 @@ export default function AdminShowtimes() {
                     <td>{st.SCREEN_NAME}</td>
                     <td>{new Date(st.SHOW_DATE).toLocaleDateString()}</td>
                     <td>{new Date(st.START_TIME).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+                    <td>
+                      <span className={`status-badge ${alreadyShown ? 'status-shown' : 'status-upcoming'}`}>
+                        {alreadyShown ? 'Already Shown' : 'Upcoming'}
+                      </span>
+                    </td>
                     <td>${st.TICKET_PRICE}</td>
                     <td>{st.SEATS_SOLD}/{st.CAPACITY}</td>
                     <td>${st.AMOUNT_SOLD}</td>
@@ -237,8 +332,12 @@ export default function AdminShowtimes() {
                         {viewingSeatsId === st.SHOWTIME_ID ? 'Hide Seats' : 'View Seats'}
                       </button>
                       {' '}
-                      <button className="link-button small" onClick={() => startEdit(st)}>Edit</button>
-                      {' '}
+                      {!alreadyShown && (
+                        <>
+                          <button className="link-button small" onClick={() => startEdit(st)}>Edit</button>
+                          {' '}
+                        </>
+                      )}
                       <button className="link-button small cancel-link" onClick={() => handleDelete(st.SHOWTIME_ID)}>Delete</button>
                     </td>
                   </>
@@ -246,7 +345,7 @@ export default function AdminShowtimes() {
               </tr>
               {viewingSeatsId === st.SHOWTIME_ID && (
                 <tr>
-                  <td colSpan={8}>
+                  <td colSpan={9}>
                     <div className="admin-seat-map-panel">
                       {seatMapLoading && <p>Loading seat map...</p>}
                       {seatMapError && <p className="error">{seatMapError}</p>}
@@ -284,7 +383,8 @@ export default function AdminShowtimes() {
                 </tr>
               )}
             </Fragment>
-          ))}
+            );
+          })}
         </tbody>
       </table>
     </div>

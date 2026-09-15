@@ -24,9 +24,10 @@ export default function SeatPicker({ showtimeId, onBooked, onBack }) {
       .catch((err) => setError(err.message));
   }, [showtimeId]);
 
-  function toggleSeat(seatId) {
+  function toggleSeat(seat) {
+    if (seat.IS_BOOKED) return;
     setSelected((prev) =>
-      prev.includes(seatId) ? prev.filter((id) => id !== seatId) : [...prev, seatId]
+      prev.includes(seat.SEAT_ID) ? prev.filter((id) => id !== seat.SEAT_ID) : [...prev, seat.SEAT_ID]
     );
   }
 
@@ -114,9 +115,10 @@ export default function SeatPicker({ showtimeId, onBooked, onBack }) {
             {rowSeats.map((seat) => (
               <button
                 key={seat.SEAT_ID}
-                className={`seat seat-${seat.SEAT_TYPE?.toLowerCase()} ${selected.includes(seat.SEAT_ID) ? 'selected' : ''}`}
-                onClick={() => toggleSeat(seat.SEAT_ID)}
-                title={`${seat.SEAT_TYPE} - Seat ${seat.SEAT_NUMBER}${basePrice != null ? ` - $${seatPrice(seat)}` : ''}`}
+                className={`seat seat-${seat.SEAT_TYPE?.toLowerCase()} ${selected.includes(seat.SEAT_ID) ? 'selected' : ''} ${seat.IS_BOOKED ? 'booked' : ''}`}
+                onClick={() => toggleSeat(seat)}
+                disabled={seat.IS_BOOKED}
+                title={`${seat.SEAT_TYPE} - Seat ${seat.SEAT_NUMBER} - ${seat.IS_BOOKED ? 'Already booked' : basePrice != null ? `$${seatPrice(seat)}` : 'Available'}`}
               >
                 {seat.SEAT_NUMBER}
               </button>
@@ -134,6 +136,7 @@ export default function SeatPicker({ showtimeId, onBooked, onBack }) {
             <span className="legend-swatch premium" /> Premium{basePrice != null ? ` · $${Math.round(basePrice * PREMIUM_MULTIPLIER)}` : ''}
           </span>
           <span className="legend-item"><span className="legend-swatch selected" /> Selected</span>
+          <span className="legend-item"><span className="legend-swatch booked" /> Booked</span>
         </div>
       )}
 

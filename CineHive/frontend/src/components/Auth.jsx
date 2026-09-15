@@ -93,8 +93,8 @@ export default function Auth({ onLoggedIn }) {
                 <label>Account Type</label>
                 <select value={role} onChange={(e) => setRole(e.target.value)}>
                   <option value="CUSTOMER">Customer</option>
-                  <option value="CINEMA_ADMIN">Cinema Admin (manages one cinema's showtimes)</option>
-                  <option value="SITE_ADMIN">Site Admin (adds movies to the catalog)</option>
+                  <option value="CINEMA_ADMIN">Cinema Admin </option>
+                  <option value="SITE_ADMIN">Site Admin </option>
                 </select>
               </div>
 

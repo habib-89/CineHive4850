@@ -4,6 +4,7 @@ import AdminAddMovie from './AdminAddMovie';
 import AdminShowtimes from './AdminShowtimes';
 import AdminCinemaAdmins from './AdminCinemaAdmins';
 import AdminCustomers from './AdminCustomers';
+import AdminFeaturedMovies from './AdminFeaturedMovies';
 
 export default function AdminApp({ onLogout, onBackToCustomer }) {
   const isCinemaAdmin = api.isCinemaAdmin();
@@ -39,6 +40,9 @@ export default function AdminApp({ onLogout, onBackToCustomer }) {
           <button className={`tab ${tab === 'addmovie' ? 'active' : ''}`} onClick={() => setTab('addmovie')}>
             Add Movie
           </button>
+          <button className={`tab ${tab === 'featured' ? 'active' : ''}`} onClick={() => setTab('featured')}>
+            Featured Movies
+          </button>
           <button className={`tab ${tab === 'cinemaadmins' ? 'active' : ''}`} onClick={() => setTab('cinemaadmins')}>
             Cinema Admins
           </button>
@@ -50,6 +54,7 @@ export default function AdminApp({ onLogout, onBackToCustomer }) {
 
       {isCinemaAdmin && <AdminShowtimes />}
       {isSiteAdmin && tab === 'addmovie' && <AdminAddMovie />}
+      {isSiteAdmin && tab === 'featured' && <AdminFeaturedMovies />}
       {isSiteAdmin && tab === 'cinemaadmins' && <AdminCinemaAdmins />}
       {isSiteAdmin && tab === 'customers' && <AdminCustomers />}
     </div>

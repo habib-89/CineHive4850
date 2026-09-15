@@ -342,7 +342,7 @@ header.marquee {
 }
 
 .field input::placeholder {
-  color: #55535e;
+  color: #6c7b7b;
 }
 
 .btn-gold {
@@ -1146,6 +1146,20 @@ header.marquee {
   color: #fff;
 }
 
+.seat.booked {
+  background: var(--bg);
+  border-color: var(--border);
+  color: #4a4850;
+  cursor: not-allowed;
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+.seat.booked:hover {
+  border-color: var(--border);
+  color: #4a4850;
+}
+
 .seat-legend {
   display: flex;
   justify-content: center;
@@ -1171,6 +1185,7 @@ header.marquee {
 
 .legend-swatch.premium { border-color: var(--gold-dim); }
 .legend-swatch.selected { background: var(--red); border-color: var(--red-bright); }
+.legend-swatch.booked { background: var(--bg); border-color: var(--border); opacity: 0.55; }
 
 .booking-bar {
   display: flex;
@@ -1415,6 +1430,17 @@ header.marquee {
 .status-paid { background: rgba(111, 207, 151, 0.15); color: var(--green); }
 .status-failed { background: rgba(193, 39, 45, 0.15); color: var(--red-bright); }
 .status-refunded { background: rgba(138, 135, 148, 0.2); color: var(--text-muted); }
+.status-upcoming { background: rgba(111, 207, 151, 0.15); color: var(--green); }
+.status-shown { background: rgba(138, 135, 148, 0.2); color: var(--text-muted); }
+
+.admin-movie-search {
+  max-width: none;
+  margin: 0;
+}
+.admin-movie-search input {
+  border-radius: 8px;
+  padding: 9px 14px;
+}
 
 /* ============================================
    Cast / crew strip
@@ -2075,4 +2101,61 @@ header.marquee {
 
 .activity-row:last-of-type {
   border-bottom: none;
+}
+
+.admin-subheading {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin: 24px 0 12px;
+}
+
+.admin-search-input {
+  width: 100%;
+  max-width: 420px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+}
+
+.admin-search-input:focus {
+  border-color: var(--gold);
+  outline: none;
+}
+
+.featured-strip {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+}
+
+.featured-chip {
+  flex: 0 0 auto;
+  width: 120px;
+  text-align: center;
+}
+
+.featured-chip img {
+  width: 100%;
+  aspect-ratio: 2/3;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--gold-dim);
+  margin-bottom: 6px;
+}
+
+.featured-chip-title {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-bottom: 4px;
 }

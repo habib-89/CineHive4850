@@ -309,15 +309,16 @@ app.get('/showtimes/:id/seats', async (req, res) => {
     );
 
     const seatsResult = await db.execute(
-      `SELECT s.SEAT_ID, s.ROW_NUMBER, s.SEAT_NUMBER, s.SEAT_TYPE
+      `SELECT s.SEAT_ID, s.ROW_NUMBER, s.SEAT_NUMBER, s.SEAT_TYPE,
+              CASE WHEN bs.SEAT_ID IS NOT NULL THEN 1 ELSE 0 END AS IS_BOOKED
        FROM SEAT s
        JOIN SHOWTIME st ON st.SCREEN_ID = s.SCREEN_ID
+       LEFT JOIN (
+         SELECT bs.SEAT_ID FROM BOOKING_SEAT bs
+         JOIN BOOKING b ON b.BOOKING_ID = bs.BOOKING_ID
+         WHERE bs.SHOWTIME_ID = :id AND b.PAYMENT_STATUS != 'REFUNDED'
+       ) bs ON bs.SEAT_ID = s.SEAT_ID
        WHERE st.SHOWTIME_ID = :id
-         AND s.SEAT_ID NOT IN (
-           SELECT bs.SEAT_ID FROM BOOKING_SEAT bs
-           JOIN BOOKING b ON b.BOOKING_ID = bs.BOOKING_ID
-           WHERE bs.SHOWTIME_ID = :id AND b.PAYMENT_STATUS != 'REFUNDED'
-         )
        ORDER BY s.ROW_NUMBER, s.SEAT_NUMBER`,
       { id: req.params.id }
     );
