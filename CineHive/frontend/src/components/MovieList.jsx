@@ -85,8 +85,9 @@ export default function MovieList({ onSelectMovie }) {
   const featured = trending[heroIndex];
 
   return (
-    <div>
-      <div className="home-top-row">
+    <div className="home-layout">
+      <main className="home-main-content">
+        <div className="home-top-row">
         {featured && (
           <div
             className="spotlight-hero"
@@ -140,7 +141,27 @@ export default function MovieList({ onSelectMovie }) {
           </div>
         )}
 
-        <div className="now-showing-panel">
+        </div>
+
+        {genreRows.map((row) => (
+          <div key={row.genreId} className="genre-row">
+            <div className="section-heading">
+              <h2>{row.genreName}</h2>
+              <span className="count">{row.movies.length} titles</span>
+            </div>
+            <div className="carousel-row">
+              {row.movies.map((movie) => (
+                <div key={movie.MOVIE_ID} className="carousel-card" onClick={() => onSelectMovie(movie.MOVIE_ID)}>
+                  {movie.POSTER_URL && <img src={movie.POSTER_URL} alt={movie.TITLE} className="carousel-poster" />}
+                  <span className="carousel-title">{movie.TITLE}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </main>
+
+      <aside className="now-showing-panel" aria-label="Now Showing in Cinemas">
           <div className="now-showing-heading">
             <div>
               <h2>Now Showing in Cinemas</h2>
@@ -191,25 +212,7 @@ export default function MovieList({ onSelectMovie }) {
               ))}
             </div>
           )}
-        </div>
-      </div>
-
-      {genreRows.map((row) => (
-        <div key={row.genreId} className="genre-row">
-          <div className="section-heading">
-            <h2>{row.genreName}</h2>
-            <span className="count">{row.movies.length} titles</span>
-          </div>
-          <div className="carousel-row">
-            {row.movies.map((movie) => (
-              <div key={movie.MOVIE_ID} className="carousel-card" onClick={() => onSelectMovie(movie.MOVIE_ID)}>
-                {movie.POSTER_URL && <img src={movie.POSTER_URL} alt={movie.TITLE} className="carousel-poster" />}
-                <span className="carousel-title">{movie.TITLE}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
+      </aside>
     </div>
   );
 }
