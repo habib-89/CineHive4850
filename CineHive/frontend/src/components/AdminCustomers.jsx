@@ -60,7 +60,7 @@ export default function AdminCustomers() {
                 <td>{c.EMAIL}</td>
                 <td>{new Date(c.DATE_JOINED).toLocaleDateString()}</td>
                 <td>{c.BOOKING_COUNT}</td>
-                <td>${c.TOTAL_SPENT}</td>
+                <td>৳{c.TOTAL_SPENT}</td>
                 <td>{c.REVIEW_COUNT}</td>
                 <td>{c.RATING_COUNT}</td>
                 <td>
@@ -83,7 +83,7 @@ export default function AdminCustomers() {
                             <div key={b.BOOKING_ID} className="activity-row">
                               <span>{b.TITLE}</span>
                               <span className="movie-meta">
-                                {new Date(b.SHOW_DATE).toLocaleDateString()} · ${b.TOTAL_AMOUNT} · {b.PAYMENT_STATUS}
+                                {new Date(b.SHOW_DATE).toLocaleDateString()} · ৳{b.TOTAL_AMOUNT} · {b.PAYMENT_STATUS}
                               </span>
                             </div>
                           ))}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import Auth from './components/Auth';
 import AdminApp from './components/AdminApp';
@@ -10,6 +10,8 @@ import BookingHistory from './components/BookingHistory';
 import PersonDetail from './components/PersonDetail';
 import SearchResults from './components/SearchResults';
 import SearchBar from './components/SearchBar';
+import Profile from './components/Profile';
+import cinehiveLogo from './assets/cinehive-logo.png';
 import './App.css';
 
 const NAV_KEY = 'cinehive_nav';
@@ -35,18 +37,35 @@ export default function App() {
   const [selectedShowtimeId, setSelectedShowtimeId] = useState(savedNav?.selectedShowtimeId ?? null);
   const [selectedPerson, setSelectedPerson] = useState(savedNav?.selectedPerson ?? null);
   const [activeSearch, setActiveSearch] = useState(savedNav?.activeSearch ?? '');
+  const [activeGenreId, setActiveGenreId] = useState(savedNav?.activeGenreId ?? '');
+  const [activeGenreName, setActiveGenreName] = useState(savedNav?.activeGenreName ?? '');
+  const [profilePic, setProfilePic] = useState(null);
+  const searchBarRef = useRef(null);
 
   const isAdmin = api.isSiteAdmin() || api.isCinemaAdmin();
 
+  // Load the user's profile picture for the header avatar once logged in.
+  useEffect(() => {
+    if (!loggedIn) {
+      setProfilePic(null);
+      return;
+    }
+    api.getMyProfile()
+      .then((data) => setProfilePic(data.PROFILE_PIC || null))
+      .catch(() => {
+        // Non-fatal — header just falls back to the letter placeholder.
+      });
+  }, [loggedIn]);
+
   // Persist navigation state on every change so a refresh lands back where you were.
   useEffect(() => {
-    const nav = { mode, tab, view, selectedMovieId, selectedShowtimeId, selectedPerson, activeSearch };
+    const nav = { mode, tab, view, selectedMovieId, selectedShowtimeId, selectedPerson, activeSearch, activeGenreId, activeGenreName };
     try {
       sessionStorage.setItem(NAV_KEY, JSON.stringify(nav));
     } catch {
       // sessionStorage unavailable (private mode etc.) — safe to ignore, just won't persist
     }
-  }, [mode, tab, view, selectedMovieId, selectedShowtimeId, selectedPerson, activeSearch]);
+  }, [mode, tab, view, selectedMovieId, selectedShowtimeId, selectedPerson, activeSearch, activeGenreId, activeGenreName]);
 
   function handleLogout() {
     api.logout();
@@ -63,23 +82,47 @@ export default function App() {
     setSelectedShowtimeId(null);
     setSelectedPerson(null);
     setActiveSearch('');
+    setActiveGenreId('');
+    setActiveGenreName('');
   }
 
   function goToMovie(id) {
     setSelectedMovieId(id);
     setActiveSearch('');
+    setActiveGenreId('');
+    setActiveGenreName('');
     setView('movie');
+    searchBarRef.current?.clear();
   }
 
   function switchTab(newTab) {
     setTab(newTab);
     setView('list');
     setActiveSearch('');
+    setActiveGenreId('');
+    setActiveGenreName('');
   }
 
-  function handleViewAll(query) {
-    setActiveSearch(query);
+  // query and/or genreId may be present; when both are empty this just
+  // drops back to normal browsing (e.g. picking "All" with nothing typed).
+  function handleViewAll(query, genreId, genreName) {
+    const trimmedQuery = (query || '').trim();
+    if (!trimmedQuery && !genreId) {
+      backToBrowsing();
+      return;
+    }
+    setActiveSearch(trimmedQuery);
+    setActiveGenreId(genreId || '');
+    setActiveGenreName(genreId ? (genreName || '') : '');
     setView('list');
+  }
+
+  function backToBrowsing() {
+    setActiveSearch('');
+    setActiveGenreId('');
+    setActiveGenreName('');
+    setView('list');
+    searchBarRef.current?.clear();
   }
 
   if (!loggedIn) {
@@ -93,19 +136,32 @@ export default function App() {
   return (
     <div className="app-container">
       <header className="marquee">
-        <div className="wordmark">
-          <h1>CINE<span>HIVE</span></h1>
-        </div>
+        <button
+          type="button"
+          className="wordmark wordmark-button"
+          onClick={() => switchTab('movies')}
+          aria-label="CineHive home"
+        >
+          <img src={cinehiveLogo} alt="CineHive" className="logo-img" />
+        </button>
 
-        <SearchBar onSelectMovie={goToMovie} onViewAll={handleViewAll} />
+        <SearchBar ref={searchBarRef} onSelectMovie={goToMovie} onViewAll={handleViewAll} />
 
         <div className="header-actions">
+          <button className="link-button profile-button" onClick={() => setView('profile')}>
+            {profilePic
+              ? <img src={profilePic} alt="" className="profile-button-avatar" />
+              : (api.getUsername()?.[0]
+                ? <span className="profile-button-avatar-placeholder">{api.getUsername()[0].toUpperCase()}</span>
+                : null)}
+            Profile
+          </button>
           <button className="link-button" onClick={handleLogout}>Log out</button>
         </div>
       </header>
 
       <nav className="tab-nav">
-        <button className={`tab ${tab === 'movies' ? 'active' : ''}`} onClick={() => switchTab('movies')}>Now Showing</button>
+        <button className={`tab ${tab === 'movies' ? 'active' : ''}`} onClick={() => switchTab('movies')}>Home</button>
         {!isAdmin && (
           <>
             <button className={`tab ${tab === 'watchlist' ? 'active' : ''}`} onClick={() => switchTab('watchlist')}>Watchlist</button>
@@ -119,12 +175,22 @@ export default function App() {
         )}
       </nav>
 
-      {view === 'list' && activeSearch && (
-        <SearchResults query={activeSearch} onSelectMovie={goToMovie} />
+      {view === 'list' && (activeSearch || activeGenreId) && (
+        <SearchResults
+          query={activeSearch}
+          genreId={activeGenreId}
+          genreName={activeGenreName}
+          onSelectMovie={goToMovie}
+          onBack={backToBrowsing}
+        />
       )}
-      {view === 'list' && !activeSearch && tab === 'movies' && <MovieList onSelectMovie={goToMovie} />}
-      {view === 'list' && !activeSearch && !isAdmin && tab === 'watchlist' && <Watchlist onSelectMovie={goToMovie} />}
-      {view === 'list' && !activeSearch && !isAdmin && tab === 'bookings' && <BookingHistory />}
+      {view === 'list' && !activeSearch && !activeGenreId && tab === 'movies' && <MovieList onSelectMovie={goToMovie} />}
+      {view === 'list' && !activeSearch && !activeGenreId && !isAdmin && tab === 'watchlist' && <Watchlist onSelectMovie={goToMovie} />}
+      {view === 'list' && !activeSearch && !activeGenreId && !isAdmin && tab === 'bookings' && <BookingHistory />}
+
+      {view === 'profile' && (
+        <Profile onBack={() => setView('list')} onProfilePicChange={setProfilePic} />
+      )}
 
       {view === 'movie' && (
         <MovieDetail

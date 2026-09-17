@@ -306,7 +306,7 @@ export default function AdminShowtimes() {
                         onChange={(e) => setEditForm({ ...editForm, ticketPrice: e.target.value })} />
                     </td>
                     <td>{st.SEATS_SOLD}/{st.CAPACITY}</td>
-                    <td>${st.AMOUNT_SOLD}</td>
+                    <td>৳{st.AMOUNT_SOLD}</td>
                     <td>
                       <button className="link-button small" onClick={() => saveEdit(st.SHOWTIME_ID)}>Save</button>
                       {' '}
@@ -324,9 +324,9 @@ export default function AdminShowtimes() {
                         {alreadyShown ? 'Already Shown' : 'Upcoming'}
                       </span>
                     </td>
-                    <td>${st.TICKET_PRICE}</td>
+                    <td>৳{st.TICKET_PRICE}</td>
                     <td>{st.SEATS_SOLD}/{st.CAPACITY}</td>
-                    <td>${st.AMOUNT_SOLD}</td>
+                    <td>৳{st.AMOUNT_SOLD}</td>
                     <td>
                       <button className="link-button small" onClick={() => toggleSeatView(st.SHOWTIME_ID)}>
                         {viewingSeatsId === st.SHOWTIME_ID ? 'Hide Seats' : 'View Seats'}

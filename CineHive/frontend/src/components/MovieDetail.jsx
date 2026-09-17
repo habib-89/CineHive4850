@@ -15,11 +15,30 @@ function getYouTubeId(url) {
   }
 }
 
+function formatMoney(value) {
+  if (value == null) return null;
+  const n = Number(value);
+  if (Number.isNaN(n)) return null;
+  if (n >= 1_000_000_000) return `\u09f3${(n / 1_000_000_000).toFixed(1)}B`;
+  if (n >= 1_000_000) return `\u09f3${(n / 1_000_000).toFixed(1)}M`;
+  return `\u09f3${n.toLocaleString()}`;
+}
+
+function seatsLeftLabel(st) {
+  if (st.TOTAL_SEATS == null) return null;
+  const left = Math.max(0, st.TOTAL_SEATS - (st.SEATS_BOOKED ?? 0));
+  const lowThreshold = Math.max(5, Math.round(st.TOTAL_SEATS * 0.1));
+  if (left === 0) return { text: 'Sold out', cls: 'seats-remaining-full' };
+  if (left <= lowThreshold) return { text: `Almost full \u00b7 ${left} left`, cls: 'seats-remaining-low' };
+  return { text: `${left} seats left`, cls: 'seats-remaining-ok' };
+}
+
 export default function MovieDetail({ movieId, onSelectShowtime, onSelectPerson, onBack, readOnly }) {
   const [movie, setMovie] = useState(null);
   const [showtimes, setShowtimes] = useState([]);
   const [cast, setCast] = useState([]);
   const [directors, setDirectors] = useState([]);
+  const [genres, setGenres] = useState([]);
   const [rating, setRating] = useState(null);
   const [reviews, setReviews] = useState([]);
   const [inWatchlist, setInWatchlist] = useState(false);
@@ -35,14 +54,16 @@ export default function MovieDetail({ movieId, onSelectShowtime, onSelectPerson,
       api.getShowtimes(movieId),
       api.getCast(movieId),
       api.getMovieDirectors(movieId),
+      api.getMovieGenres(movieId),
       api.getRating(movieId),
       api.getReviews(movieId),
     ])
-      .then(([movieData, showtimeData, castData, directorData, ratingData, reviewData]) => {
+      .then(([movieData, showtimeData, castData, directorData, genreData, ratingData, reviewData]) => {
         setMovie(movieData);
         setShowtimes(showtimeData);
         setCast(castData);
         setDirectors(directorData);
+        setGenres(genreData);
         setRating(ratingData);
         setReviews(reviewData);
       })
@@ -116,6 +137,16 @@ export default function MovieDetail({ movieId, onSelectShowtime, onSelectPerson,
 
   const upcomingPreview = showtimes.slice(0, 3);
   const trailerId = getYouTubeId(movie.TRAILER_URL);
+
+  // Group showtimes by cinema so each venue shows once with its screens/times underneath.
+  const showtimesByCinema = showtimes.reduce((acc, st) => {
+    const key = st.CINEMA_NAME || 'Unknown Cinema';
+    (acc[key] ||= { cinemaName: st.CINEMA_NAME, city: st.CITY, shows: [] }).shows.push(st);
+    return acc;
+  }, {});
+
+  const budgetLabel = formatMoney(movie.BUDGET);
+  const boxOfficeLabel = formatMoney(movie.BOX_OFFICE);
 
   return (
     <div className="movie-detail">
@@ -235,6 +266,41 @@ export default function MovieDetail({ movieId, onSelectShowtime, onSelectPerson,
         </div>
       )}
 
+      {/* ===== Movie Info panel ===== */}
+      <div className="movie-info-panel">
+        <div className="movie-info-panel-header">Movie Info</div>
+        <div className="movie-info-grid">
+          <div className="movie-info-item">
+            <span className="movie-info-label">Release Date</span>
+            <span className="movie-info-value">
+              {movie.RELEASE_DATE ? new Date(movie.RELEASE_DATE).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+            </span>
+          </div>
+          <div className="movie-info-item">
+            <span className="movie-info-label">Duration</span>
+            <span className="movie-info-value">{movie.DURATION ? `${movie.DURATION} min` : '—'}</span>
+          </div>
+          <div className="movie-info-item">
+            <span className="movie-info-label">Language</span>
+            <span className="movie-info-value">{movie.LANGUAGE || '—'}</span>
+          </div>
+          <div className="movie-info-item">
+            <span className="movie-info-label">Budget</span>
+            <span className="movie-info-value">{budgetLabel || '—'}</span>
+          </div>
+          <div className="movie-info-item">
+            <span className="movie-info-label">Box Office</span>
+            <span className="movie-info-value">{boxOfficeLabel || '—'}</span>
+          </div>
+          <div className="movie-info-item movie-info-item-genres">
+            <span className="movie-info-label">Genres</span>
+            <span className="movie-info-value">
+              {genres.length > 0 ? genres.map((g) => g.GENRE_NAME).join(' \u00b7 ') : '—'}
+            </span>
+          </div>
+        </div>
+      </div>
+
       {/* ===== Cast ===== */}
       {cast.length > 0 && (
         <>
@@ -251,27 +317,41 @@ export default function MovieDetail({ movieId, onSelectShowtime, onSelectPerson,
         </>
       )}
 
-      {/* ===== Showtimes ===== */}
+      {/* ===== Showtimes, grouped by cinema ===== */}
       {!readOnly && (
         <>
           <div id="showtimes-section" className="section-heading"><h2>Showtimes</h2></div>
           {showtimes.length === 0 && <p className="movie-meta">No showtimes scheduled.</p>}
-          <div className="showtime-list">
-            {showtimes.map((st) => (
-              <button key={st.SHOWTIME_ID} className="ticket-stub" onClick={() => onSelectShowtime(st.SHOWTIME_ID)}>
-                <div className="ticket-main">
-                  <span className="ticket-date">
-                    {new Date(st.SHOW_DATE).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                  </span>
-                  <span className="ticket-time">
-                    {new Date(st.START_TIME).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                </div>
-                <div className="ticket-perforation" />
-                <div className="ticket-price">${st.TICKET_PRICE}</div>
-              </button>
-            ))}
-          </div>
+
+          {Object.values(showtimesByCinema).map((group) => (
+            <div key={group.cinemaName} className="cinema-showtime-group">
+              <div className="cinema-showtime-header">
+                <span className="cinema-showtime-name">{group.cinemaName}</span>
+                {group.city && <span className="cinema-showtime-city">{group.city}</span>}
+              </div>
+              <div className="showtime-list">
+                {group.shows.map((st) => {
+                  const left = seatsLeftLabel(st);
+                  return (
+                    <button key={st.SHOWTIME_ID} className="ticket-stub" onClick={() => onSelectShowtime(st.SHOWTIME_ID)}>
+                      <div className="ticket-main">
+                        <span className="ticket-screen">{st.SCREEN_NAME}</span>
+                        <span className="ticket-date">
+                          {new Date(st.SHOW_DATE).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                        </span>
+                        <span className="ticket-time">
+                          {new Date(st.START_TIME).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                        {left && <span className={`ticket-seats-left ${left.cls}`}>{left.text}</span>}
+                      </div>
+                      <div className="ticket-perforation" />
+                      <div className="ticket-price">৳{st.TICKET_PRICE}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </>
       )}
 

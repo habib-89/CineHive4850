@@ -4,6 +4,9 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const path = require('path');
+const fs = require('fs');
+const multer = require('multer');
 const db = require('./db');
 
 const app = express();
@@ -12,6 +15,36 @@ app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET;
 const SITE_ADMIN_SECRET = process.env.SITE_ADMIN_SECRET_CODE;
+
+// --- Profile picture uploads (local file / gallery picker) ---
+
+const UPLOADS_DIR = path.join(__dirname, 'uploads', 'profile-pictures');
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+// Serve uploaded pictures back out as plain static files, e.g.
+// http://localhost:3000/uploads/profile-pictures/12-1234567890.jpg
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+const pictureStorage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, UPLOADS_DIR),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
+    cb(null, `${req.user.userId}-${Date.now()}${ext}`);
+  },
+});
+
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+const uploadPicture = multer({
+  storage: pictureStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (req, file, cb) => {
+    if (!ALLOWED_IMAGE_TYPES.includes(file.mimetype)) {
+      return cb(new Error('Only JPG, PNG, WEBP, or GIF images are allowed'));
+    }
+    cb(null, true);
+  },
+});
 
 // --- Auth routes ---
 
@@ -77,7 +110,9 @@ app.post('/auth/register', async (req, res) => {
         username,
         email,
         passwordHash,
-        dateOfBirth: dateOfBirth || null,
+        // Oracle DATE column — needs a real Date object, not the raw string
+        // (see the matching note on PUT /profile/me).
+        dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
         role: chosenRole,
         cinemaId: finalCinemaId,
         isApproved,
@@ -236,20 +271,38 @@ app.get('/movies/featured', async (req, res) => {
   }
 });
 
-// Search movies by title (case-insensitive partial match)
+// Search movies by title (case-insensitive partial match), optionally
+// narrowed to one genre via ?genreId= (the "All ▾" filter in the search bar).
+// A genreId with no q browses that genre's full catalog; a q with no
+// genreId behaves like a plain title search.
 app.get('/movies/search', async (req, res) => {
   const q = (req.query.q || '').trim();
-  if (!q) {
+  const genreId = req.query.genreId ? Number(req.query.genreId) : null;
+  if (!q && !genreId) {
     return res.json([]);
   }
   try {
+    const params = {};
+    const whereClauses = [];
+    let genreJoin = '';
+    if (genreId) {
+      genreJoin = 'JOIN MOVIE_GENRE mg ON mg.MOVIE_ID = m.MOVIE_ID';
+      whereClauses.push('mg.GENRE_ID = :genreId');
+      params.genreId = genreId;
+    }
+    if (q) {
+      whereClauses.push("UPPER(m.TITLE) LIKE UPPER('%' || :q || '%')");
+      params.q = q;
+    }
+    const whereSql = whereClauses.length ? `WHERE ${whereClauses.join(' AND ')}` : '';
     const result = await db.execute(
-      `SELECT MOVIE_ID, TITLE, RELEASE_DATE, DURATION, LANGUAGE, POSTER_URL, BACKDROP_URL
-       FROM MOVIE
-       WHERE UPPER(TITLE) LIKE UPPER('%' || :q || '%')
-       ORDER BY RELEASE_DATE DESC
-       FETCH FIRST 20 ROWS ONLY`,
-      { q }
+      `SELECT DISTINCT m.MOVIE_ID, m.TITLE, m.RELEASE_DATE, m.DURATION, m.LANGUAGE, m.POSTER_URL, m.BACKDROP_URL
+       FROM MOVIE m
+       ${genreJoin}
+       ${whereSql}
+       ORDER BY m.RELEASE_DATE DESC
+       FETCH FIRST 40 ROWS ONLY`,
+      params
     );
     res.json(result.rows);
   } catch (err) {
@@ -282,16 +335,97 @@ app.get('/movies/:id', async (req, res) => {
 app.get('/movies/:id/showtimes', async (req, res) => {
   try {
     const result = await db.execute(
-      `SELECT SHOWTIME_ID, MOVIE_ID, SCREEN_ID, SHOW_DATE, START_TIME, END_TIME, TICKET_PRICE
-       FROM SHOWTIME
-       WHERE MOVIE_ID = :id AND START_TIME > SYSTIMESTAMP
-       ORDER BY SHOW_DATE, START_TIME`,
+      `SELECT st.SHOWTIME_ID, st.MOVIE_ID, st.SCREEN_ID, st.SHOW_DATE, st.START_TIME, st.END_TIME, st.TICKET_PRICE,
+              c.CINEMA_NAME, c.CITY, sc.SCREEN_NAME, sc.CAPACITY AS TOTAL_SEATS,
+              NVL((SELECT COUNT(*) FROM BOOKING_SEAT bs
+                   JOIN BOOKING b ON b.BOOKING_ID = bs.BOOKING_ID
+                   WHERE bs.SHOWTIME_ID = st.SHOWTIME_ID AND b.PAYMENT_STATUS != 'REFUNDED'), 0) AS SEATS_BOOKED
+       FROM SHOWTIME st
+       JOIN SCREEN sc ON sc.SCREEN_ID = st.SCREEN_ID
+       JOIN CINEMA c ON c.CINEMA_ID = sc.CINEMA_ID
+       WHERE st.MOVIE_ID = :id AND st.START_TIME > SYSTIMESTAMP
+       ORDER BY st.SHOW_DATE, st.START_TIME`,
       { id: req.params.id }
     );
     res.json(result.rows);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch showtimes' });
+  }
+});
+
+// "Now Showing" movies grouped by which cinema hall(s) are currently screening
+// them (any showtime still in the future). Optionally narrow to one cinema
+// with ?cinemaId=. Used by the homepage "Now Showing in Cinemas" rail.
+app.get('/movies/now-showing', async (req, res) => {
+  const cinemaId = req.query.cinemaId ? Number(req.query.cinemaId) : null;
+  try {
+    const result = await db.execute(
+      `SELECT m.MOVIE_ID, m.TITLE, m.POSTER_URL, m.BACKDROP_URL, m.DURATION, m.LANGUAGE, m.RELEASE_DATE,
+              c.CINEMA_ID, c.CINEMA_NAME, c.CITY,
+              MIN(st.START_TIME) AS NEXT_SHOWTIME
+       FROM MOVIE m
+       JOIN SHOWTIME st ON st.MOVIE_ID = m.MOVIE_ID
+       JOIN SCREEN sc ON sc.SCREEN_ID = st.SCREEN_ID
+       JOIN CINEMA c ON c.CINEMA_ID = sc.CINEMA_ID
+       WHERE st.START_TIME > SYSTIMESTAMP
+       ${cinemaId ? 'AND c.CINEMA_ID = :cinemaId' : ''}
+       GROUP BY m.MOVIE_ID, m.TITLE, m.POSTER_URL, m.BACKDROP_URL, m.DURATION, m.LANGUAGE, m.RELEASE_DATE,
+                c.CINEMA_ID, c.CINEMA_NAME, c.CITY
+       ORDER BY m.TITLE, NEXT_SHOWTIME`,
+      cinemaId ? { cinemaId } : {}
+    );
+
+    // Group the (movie, cinema) rows into one entry per movie with a list of
+    // cinemas showing it, done here rather than with LISTAGG for portability
+    // across Oracle versions.
+    const byMovie = new Map();
+    for (const row of result.rows) {
+      if (!byMovie.has(row.MOVIE_ID)) {
+        byMovie.set(row.MOVIE_ID, {
+          MOVIE_ID: row.MOVIE_ID,
+          TITLE: row.TITLE,
+          POSTER_URL: row.POSTER_URL,
+          BACKDROP_URL: row.BACKDROP_URL,
+          DURATION: row.DURATION,
+          LANGUAGE: row.LANGUAGE,
+          RELEASE_DATE: row.RELEASE_DATE,
+          NEXT_SHOWTIME: row.NEXT_SHOWTIME,
+          CINEMAS: [],
+        });
+      }
+      const entry = byMovie.get(row.MOVIE_ID);
+      entry.CINEMAS.push({ CINEMA_ID: row.CINEMA_ID, CINEMA_NAME: row.CINEMA_NAME, CITY: row.CITY });
+      if (new Date(row.NEXT_SHOWTIME) < new Date(entry.NEXT_SHOWTIME)) {
+        entry.NEXT_SHOWTIME = row.NEXT_SHOWTIME;
+      }
+    }
+
+    const movies = Array.from(byMovie.values())
+      .sort((a, b) => new Date(a.NEXT_SHOWTIME) - new Date(b.NEXT_SHOWTIME));
+
+    res.json(movies);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch now-showing movies' });
+  }
+});
+
+
+app.get('/movies/:id/genres', async (req, res) => {
+  try {
+    const result = await db.execute(
+      `SELECT g.GENRE_ID, g.GENRE_NAME
+       FROM MOVIE_GENRE mg
+       JOIN GENRE g ON g.GENRE_ID = mg.GENRE_ID
+       WHERE mg.MOVIE_ID = :id
+       ORDER BY g.GENRE_NAME`,
+      { id: req.params.id }
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch genres' });
   }
 });
 
@@ -351,9 +485,15 @@ app.post('/bookings', requireAuth, requireCustomer, async (req, res) => {
   try {
     connection = await db.getRawConnection();
 
-    // Look up base ticket price and start time for this showtime
+    // Look up base ticket price, start time, and movie/cinema/screen details for this showtime
     const priceResult = await connection.execute(
-      `SELECT TICKET_PRICE, START_TIME FROM SHOWTIME WHERE SHOWTIME_ID = :showtimeId`,
+      `SELECT st.TICKET_PRICE, st.START_TIME, st.SHOW_DATE,
+              m.TITLE AS MOVIE_TITLE, c.CINEMA_NAME, sc.SCREEN_NAME
+       FROM SHOWTIME st
+       JOIN MOVIE m ON m.MOVIE_ID = st.MOVIE_ID
+       JOIN SCREEN sc ON sc.SCREEN_ID = st.SCREEN_ID
+       JOIN CINEMA c ON c.CINEMA_ID = sc.CINEMA_ID
+       WHERE st.SHOWTIME_ID = :showtimeId`,
       { showtimeId }
     );
     if (priceResult.rows.length === 0) {
@@ -365,10 +505,14 @@ app.post('/bookings', requireAuth, requireCustomer, async (req, res) => {
       return res.status(409).json({ error: 'This showtime has already started' });
     }
     const basePrice = priceResult.rows[0].TICKET_PRICE;
+    const showtimeInfo = priceResult.rows[0];
 
-    // Look up each selected seat's type so premium seats can be priced higher
+    // Look up each selected seat's type + row/number so premium seats price higher
+    // and the confirmation ticket can show real seat labels (e.g. "C5, C6").
     const seatTypesResult = await connection.execute(
-      `SELECT SEAT_ID, SEAT_TYPE FROM SEAT WHERE SEAT_ID IN (${seatIds.map((_, i) => `:s${i}`).join(',')})`,
+      `SELECT SEAT_ID, SEAT_TYPE, ROW_NUMBER, SEAT_NUMBER
+       FROM SEAT WHERE SEAT_ID IN (${seatIds.map((_, i) => `:s${i}`).join(',')})
+       ORDER BY ROW_NUMBER, SEAT_NUMBER`,
       Object.fromEntries(seatIds.map((id, i) => [`s${i}`, id]))
     );
     if (seatTypesResult.rows.length !== seatIds.length) {
@@ -377,11 +521,13 @@ app.post('/bookings', requireAuth, requireCustomer, async (req, res) => {
     }
 
     const seatPriceMap = {};
+    const seatLabels = [];
     let totalAmount = 0;
     for (const row of seatTypesResult.rows) {
       const price = row.SEAT_TYPE === 'PREMIUM' ? basePrice * PREMIUM_MULTIPLIER : basePrice;
       seatPriceMap[row.SEAT_ID] = price;
       totalAmount += price;
+      seatLabels.push(`${row.ROW_NUMBER}${row.SEAT_NUMBER}`);
     }
 
     // Insert the booking, capturing the generated BOOKING_ID
@@ -410,7 +556,18 @@ app.post('/bookings', requireAuth, requireCustomer, async (req, res) => {
     }
 
     await connection.commit();
-    res.status(201).json({ message: 'Booking created', bookingId, totalAmount, seatCount: seatIds.length });
+    res.status(201).json({
+      message: 'Booking created',
+      bookingId,
+      totalAmount,
+      seatCount: seatIds.length,
+      seatLabels,
+      movieTitle: showtimeInfo.MOVIE_TITLE,
+      cinemaName: showtimeInfo.CINEMA_NAME,
+      screenName: showtimeInfo.SCREEN_NAME,
+      showDate: showtimeInfo.SHOW_DATE,
+      startTime: showtimeInfo.START_TIME,
+    });
   } catch (err) {
     if (connection) await connection.rollback();
     console.error(err);
@@ -729,6 +886,23 @@ app.post('/bookings/:id/cancel', requireAuth, requireCustomer, async (req, res) 
   }
 });
 
+// Get the flat list of genres that have at least one movie (for the search
+// bar's genre filter dropdown, and anywhere else that just needs the list).
+app.get('/genres', async (req, res) => {
+  try {
+    const result = await db.execute(
+      `SELECT DISTINCT g.GENRE_ID, g.GENRE_NAME
+       FROM GENRE g
+       JOIN MOVIE_GENRE mg ON mg.GENRE_ID = g.GENRE_ID
+       ORDER BY g.GENRE_NAME`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch genres' });
+  }
+});
+
 // Get movies grouped by genre (only genres that have at least one movie)
 app.get('/catalog/by-genre', async (req, res) => {
   try {
@@ -973,6 +1147,57 @@ app.get('/admin/genres', requireAuth, requireSiteAdmin, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to fetch genres' });
+  }
+});
+
+// --- Site admin: featured movies (homepage hero rotation) ---
+
+// Get every movie with its current IS_FEATURED status, for the Featured Movies admin screen
+app.get('/admin/featured-movies', requireAuth, requireSiteAdmin, async (req, res) => {
+  try {
+    const result = await db.execute(
+      `SELECT MOVIE_ID, TITLE, POSTER_URL, RELEASE_DATE, IS_FEATURED
+       FROM MOVIE
+       ORDER BY TITLE`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch movies' });
+  }
+});
+
+// Add a movie to the homepage hero rotation
+app.post('/admin/movies/:id/feature', requireAuth, requireSiteAdmin, async (req, res) => {
+  try {
+    const result = await db.execute(
+      `UPDATE MOVIE SET IS_FEATURED = 1 WHERE MOVIE_ID = :id`,
+      { id: req.params.id }
+    );
+    if (result.rowsAffected === 0) {
+      return res.status(404).json({ error: 'Movie not found' });
+    }
+    res.json({ message: 'Movie featured' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to feature movie' });
+  }
+});
+
+// Remove a movie from the homepage hero rotation
+app.post('/admin/movies/:id/unfeature', requireAuth, requireSiteAdmin, async (req, res) => {
+  try {
+    const result = await db.execute(
+      `UPDATE MOVIE SET IS_FEATURED = 0 WHERE MOVIE_ID = :id`,
+      { id: req.params.id }
+    );
+    if (result.rowsAffected === 0) {
+      return res.status(404).json({ error: 'Movie not found' });
+    }
+    res.json({ message: 'Movie unfeatured' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to unfeature movie' });
   }
 });
 
@@ -1252,6 +1477,183 @@ app.delete('/admin/showtimes/:id', requireAuth, requireCinemaAdmin, async (req, 
     console.error(err);
     res.status(500).json({ error: 'Failed to delete showtime' });
   }
+});
+
+// --- Profile (every logged-in user: customers, cinema admins, site admins) ---
+
+// Get the logged-in user's own profile
+app.get('/profile/me', requireAuth, async (req, res) => {
+  try {
+    const result = await db.execute(
+      `SELECT u.USER_ID, u.USERNAME, u.EMAIL, u.DATE_OF_BIRTH, u.DATE_JOINED, u.ROLE,
+              u.CINEMA_ID, u.PROFILE_PIC, u.IS_APPROVED, c.CINEMA_NAME
+       FROM APP_USER u
+       LEFT JOIN CINEMA c ON c.CINEMA_ID = u.CINEMA_ID
+       WHERE u.USER_ID = :userId`,
+      { userId: req.user.userId }
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch profile' });
+  }
+});
+
+// Update the logged-in user's own profile (not role, not cinema, not password)
+app.put('/profile/me', requireAuth, async (req, res) => {
+  const { username, email, dateOfBirth, profilePictureUrl } = req.body;
+
+  if (!username || !email) {
+    return res.status(400).json({ error: 'username and email are required' });
+  }
+
+  try {
+    await db.execute(
+      `UPDATE APP_USER
+       SET USERNAME = :username,
+           EMAIL = :email,
+           DATE_OF_BIRTH = :dateOfBirth,
+           PROFILE_PIC = :profilePictureUrl
+       WHERE USER_ID = :userId`,
+      {
+        username,
+        email,
+        // Oracle DATE column — node-oracledb needs an actual Date object here,
+        // not the raw "yyyy-mm-dd" string from <input type="date">, or the
+        // implicit server-side conversion throws ORA-01861.
+        dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
+        profilePictureUrl: profilePictureUrl || null,
+        userId: req.user.userId,
+      }
+    );
+    res.json({ message: 'Profile updated' });
+  } catch (err) {
+    console.error(err);
+    if (err.errorNum === 1) {
+      return res.status(409).json({ error: 'Username or email already in use' });
+    }
+    res.status(500).json({ error: 'Failed to update profile' });
+  }
+});
+
+// Change the logged-in user's own password
+app.post('/profile/me/password', requireAuth, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'currentPassword and newPassword are required' });
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters' });
+  }
+
+  try {
+    const result = await db.execute(
+      `SELECT PASSWORD_HASH FROM APP_USER WHERE USER_ID = :userId`,
+      { userId: req.user.userId }
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const match = await bcrypt.compare(currentPassword, result.rows[0].PASSWORD_HASH);
+    if (!match) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+
+    const newHash = await bcrypt.hash(newPassword, 10);
+    await db.execute(
+      `UPDATE APP_USER SET PASSWORD_HASH = :newHash WHERE USER_ID = :userId`,
+      { newHash, userId: req.user.userId }
+    );
+    res.json({ message: 'Password changed' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to change password' });
+  }
+});
+
+// Get the logged-in user's own activity history (bookings, reviews, ratings).
+// Only customers can book/review/rate, so this will just come back empty for admins.
+app.get('/profile/me/activity', requireAuth, async (req, res) => {
+  try {
+    const bookings = await db.execute(
+      `SELECT b.BOOKING_ID, m.MOVIE_ID, m.TITLE, m.POSTER_URL, st.SHOW_DATE, st.START_TIME,
+              b.TOTAL_AMOUNT, b.PAYMENT_STATUS, b.BOOKING_DATE
+       FROM BOOKING b
+       JOIN SHOWTIME st ON st.SHOWTIME_ID = b.SHOWTIME_ID
+       JOIN MOVIE m ON m.MOVIE_ID = st.MOVIE_ID
+       WHERE b.USER_ID = :userId
+       ORDER BY b.BOOKING_DATE DESC`,
+      { userId: req.user.userId }
+    );
+    const reviews = await db.execute(
+      `SELECT r.REVIEW_ID, m.MOVIE_ID, m.TITLE, m.POSTER_URL, r.REVIEW_TEXT, r.REVIEW_DATE
+       FROM REVIEW r JOIN MOVIE m ON m.MOVIE_ID = r.MOVIE_ID
+       WHERE r.USER_ID = :userId
+       ORDER BY r.REVIEW_DATE DESC`,
+      { userId: req.user.userId }
+    );
+    const ratings = await db.execute(
+      `SELECT m.MOVIE_ID, m.TITLE, m.POSTER_URL, rt.RATING_VALUE, rt.RATING_DATE
+       FROM RATING rt JOIN MOVIE m ON m.MOVIE_ID = rt.MOVIE_ID
+       WHERE rt.USER_ID = :userId
+       ORDER BY rt.RATING_DATE DESC`,
+      { userId: req.user.userId }
+    );
+    res.json({ bookings: bookings.rows, reviews: reviews.rows, ratings: ratings.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch activity history' });
+  }
+});
+
+// Upload a profile picture from the user's device (file/folder or phone gallery).
+// Replaces any previous PROFILE_PIC value and deletes the old uploaded file, if any.
+app.post('/profile/me/picture', requireAuth, uploadPicture.single('picture'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'No image file was uploaded' });
+  }
+
+  const pictureUrl = `${req.protocol}://${req.get('host')}/uploads/profile-pictures/${req.file.filename}`;
+
+  try {
+    const existing = await db.execute(
+      `SELECT PROFILE_PIC FROM APP_USER WHERE USER_ID = :userId`,
+      { userId: req.user.userId }
+    );
+
+    await db.execute(
+      `UPDATE APP_USER SET PROFILE_PIC = :pictureUrl WHERE USER_ID = :userId`,
+      { pictureUrl, userId: req.user.userId }
+    );
+
+    // Best-effort cleanup of the previous uploaded file (only if it was one of ours).
+    const oldUrl = existing.rows[0]?.PROFILE_PIC;
+    if (oldUrl && oldUrl.includes('/uploads/profile-pictures/')) {
+      const oldFilename = oldUrl.split('/uploads/profile-pictures/')[1];
+      const oldPath = path.join(UPLOADS_DIR, oldFilename);
+      fs.unlink(oldPath, () => {}); // ignore errors — file may already be gone
+    }
+
+    res.json({ message: 'Profile picture updated', profilePictureUrl: pictureUrl });
+  } catch (err) {
+    console.error(err);
+    fs.unlink(req.file.path, () => {}); // clean up the just-uploaded file since the DB update failed
+    res.status(500).json({ error: 'Failed to save profile picture' });
+  }
+});
+
+// Handle multer errors (file too large, bad type, etc.) with a clean JSON response
+// instead of Express's default HTML error page.
+app.use('/profile/me/picture', (err, req, res, next) => {
+  if (err instanceof multer.MulterError || err) {
+    return res.status(400).json({ error: err.message || 'Upload failed' });
+  }
+  next();
 });
 
 // --- Startup ---

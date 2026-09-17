@@ -11,3 +11,5 @@ showtimes: http://localhost:3000/movies/1/showtimes
 ignore bug : npm approve-scripts --allow-scripts-pending
 
 db pass : CineHive@2026
+
+BackEnd : cd C:\Users\user\OneDrive\Desktop\CineHive-git\CineHive4850\CineHive

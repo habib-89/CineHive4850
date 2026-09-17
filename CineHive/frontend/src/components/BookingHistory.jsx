@@ -48,7 +48,7 @@ export default function BookingHistory() {
       {loading && <p>Loading...</p>}
       {error && <p className="error">{error}</p>}
       {!loading && bookings.length === 0 && !error && (
-        <p className="movie-meta">No bookings yet — grab a showtime from Now Showing.</p>
+        <p className="movie-meta">No bookings yet — grab a showtime from Homepage.</p>
       )}
 
       <div className="booking-history-list">
@@ -66,7 +66,7 @@ export default function BookingHistory() {
               </div>
               <div className="booking-history-right">
                 <span className={`status-badge status-${b.PAYMENT_STATUS?.toLowerCase()}`}>{b.PAYMENT_STATUS}</span>
-                <span className="ticket-price">${b.TOTAL_AMOUNT}</span>
+                <span className="ticket-price">৳{b.TOTAL_AMOUNT}</span>
                 {canCancel && (
                   <button
                     className="link-button small cancel-link"

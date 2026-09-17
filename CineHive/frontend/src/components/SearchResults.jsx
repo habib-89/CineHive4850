@@ -1,31 +1,45 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 
-export default function SearchResults({ query, onSelectMovie }) {
+export default function SearchResults({ query, genreId, genreName, onSelectMovie, onBack }) {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  const trimmedQuery = (query || '').trim();
+
   useEffect(() => {
     setLoading(true);
     setError('');
-    api.searchMovies(query)
+    api.searchMovies(trimmedQuery, genreId || undefined)
       .then(setResults)
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [query]);
+  }, [trimmedQuery, genreId]);
+
+  // Three cases: title search within a genre, plain title search,
+  // or browsing a genre with no typed query at all.
+  const heading = trimmedQuery
+    ? (genreName ? `Results for "${trimmedQuery}" in ${genreName}` : `Results for "${trimmedQuery}"`)
+    : `${genreName || 'Filtered'} Movies`;
+
+  const emptyMessage = trimmedQuery
+    ? `No movies match "${trimmedQuery}"${genreName ? ` in ${genreName}` : ''}.`
+    : `No ${genreName || 'matching'} movies found.`;
 
   return (
     <div>
+      <button className="back-button" onClick={onBack}>&larr; Back to Browsing</button>
+
       <div className="section-heading">
-        <h2>Results for "{query}"</h2>
+        <h2>{heading}</h2>
         {!loading && !error && <span className="count">{results.length} found</span>}
       </div>
 
       {loading && <p>Searching...</p>}
       {error && <p className="error">{error}</p>}
       {!loading && !error && results.length === 0 && (
-        <p className="movie-meta">No movies match "{query}".</p>
+        <p className="movie-meta">{emptyMessage}</p>
       )}
 
       <div className="movie-grid">
