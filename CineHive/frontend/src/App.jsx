@@ -11,6 +11,7 @@ import PersonDetail from './components/PersonDetail';
 import SearchResults from './components/SearchResults';
 import SearchBar from './components/SearchBar';
 import Profile from './components/Profile';
+import Help from './components/Help';
 import cinehiveLogo from './assets/cinehive-logo.png';
 import './App.css';
 
@@ -31,6 +32,7 @@ const savedNav = loadSavedNav();
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(api.isLoggedIn());
   const [mode, setMode] = useState(savedNav?.mode ?? 'customer'); // 'customer' | 'admin'
+  const [adminTab, setAdminTab] = useState(savedNav?.adminTab ?? 'addmovie');
   const [tab, setTab] = useState(savedNav?.tab ?? 'movies');
   const [view, setView] = useState(savedNav?.view ?? 'list');
   const [selectedMovieId, setSelectedMovieId] = useState(savedNav?.selectedMovieId ?? null);
@@ -40,18 +42,24 @@ export default function App() {
   const [activeGenreId, setActiveGenreId] = useState(savedNav?.activeGenreId ?? '');
   const [activeGenreName, setActiveGenreName] = useState(savedNav?.activeGenreName ?? '');
   const [profilePic, setProfilePic] = useState(null);
+  const [nickname, setNickname] = useState(null);
   const searchBarRef = useRef(null);
 
   const isAdmin = api.isSiteAdmin() || api.isCinemaAdmin();
+  const isSiteAdmin = api.isSiteAdmin();
 
   // Load the user's profile picture for the header avatar once logged in.
   useEffect(() => {
     if (!loggedIn) {
       setProfilePic(null);
+      setNickname(null);
       return;
     }
     api.getMyProfile()
-      .then((data) => setProfilePic(data.PROFILE_PIC || null))
+      .then((data) => {
+        setProfilePic(data.PROFILE_PIC || null);
+        setNickname(data.NICKNAME || null);
+      })
       .catch(() => {
         // Non-fatal — header just falls back to the letter placeholder.
       });
@@ -59,13 +67,13 @@ export default function App() {
 
   // Persist navigation state on every change so a refresh lands back where you were.
   useEffect(() => {
-    const nav = { mode, tab, view, selectedMovieId, selectedShowtimeId, selectedPerson, activeSearch, activeGenreId, activeGenreName };
+    const nav = { mode, adminTab, tab, view, selectedMovieId, selectedShowtimeId, selectedPerson, activeSearch, activeGenreId, activeGenreName };
     try {
       sessionStorage.setItem(NAV_KEY, JSON.stringify(nav));
     } catch {
       // sessionStorage unavailable (private mode etc.) — safe to ignore, just won't persist
     }
-  }, [mode, tab, view, selectedMovieId, selectedShowtimeId, selectedPerson, activeSearch, activeGenreId, activeGenreName]);
+  }, [mode, adminTab, tab, view, selectedMovieId, selectedShowtimeId, selectedPerson, activeSearch, activeGenreId, activeGenreName]);
 
   function handleLogout() {
     api.logout();
@@ -125,12 +133,17 @@ export default function App() {
     searchBarRef.current?.clear();
   }
 
+  function goToAdmin(tabName) {
+    setAdminTab(tabName);
+    setMode('admin');
+  }
+
   if (!loggedIn) {
     return <Auth onLoggedIn={() => setLoggedIn(true)} />;
   }
 
   if (mode === 'admin' && isAdmin) {
-    return <AdminApp onLogout={handleLogout} onBackToCustomer={() => setMode('customer')} />;
+    return <AdminApp onLogout={handleLogout} onBackToCustomer={() => setMode('customer')} initialTab={adminTab} />;
   }
 
   return (
@@ -148,18 +161,22 @@ export default function App() {
         <SearchBar ref={searchBarRef} onSelectMovie={goToMovie} onViewAll={handleViewAll} />
 
         <div className="header-actions">
+          {!isAdmin && (
+            <button className="link-button" onClick={() => setView('help')}>Help</button>
+          )}
           <button className="link-button profile-button" onClick={() => setView('profile')}>
             {profilePic
               ? <img src={profilePic} alt="" className="profile-button-avatar" />
-              : (api.getUsername()?.[0]
-                ? <span className="profile-button-avatar-placeholder">{api.getUsername()[0].toUpperCase()}</span>
+              : ((nickname || api.getUsername())?.[0]
+                ? <span className="profile-button-avatar-placeholder">{(nickname || api.getUsername())[0].toUpperCase()}</span>
                 : null)}
-            Profile
+            {nickname || 'Profile'}
           </button>
           <button className="link-button" onClick={handleLogout}>Log out</button>
         </div>
       </header>
 
+      {view !== 'profile' && view !== 'help' && (
       <nav className="tab-nav">
         <button className={`tab ${tab === 'movies' ? 'active' : ''}`} onClick={() => switchTab('movies')}>Home</button>
         {!isAdmin && (
@@ -168,12 +185,23 @@ export default function App() {
             <button className={`tab ${tab === 'bookings' ? 'active' : ''}`} onClick={() => switchTab('bookings')}>My Bookings</button>
           </>
         )}
-        {isAdmin && (
-          <button className="tab tab-manage" onClick={() => setMode('admin')}>
-            &#9881; {api.isCinemaAdmin() ? 'Manage Cinema' : 'Manage Movies'}
+        {isAdmin && isSiteAdmin && (
+          <>
+            <button className="tab tab-manage" onClick={() => goToAdmin('addmovie')}>&#9881; Add Movie</button>
+            <button className="tab tab-manage" onClick={() => goToAdmin('editmovie')}>Edit Movies</button>
+            <button className="tab tab-manage" onClick={() => goToAdmin('featured')}>Featured Movies</button>
+            <button className="tab tab-manage" onClick={() => goToAdmin('cinemaadmins')}>Cinema Admins</button>
+            <button className="tab tab-manage" onClick={() => goToAdmin('customers')}>Customers</button>
+            <button className="tab tab-manage" onClick={() => goToAdmin('suggestions')}>Suggestions</button>
+          </>
+        )}
+        {isAdmin && !isSiteAdmin && (
+          <button className="tab tab-manage" onClick={() => goToAdmin('addmovie')}>
+            &#9881; Manage Cinema
           </button>
         )}
       </nav>
+      )}
 
       {view === 'list' && (activeSearch || activeGenreId) && (
         <SearchResults
@@ -189,8 +217,10 @@ export default function App() {
       {view === 'list' && !activeSearch && !activeGenreId && !isAdmin && tab === 'bookings' && <BookingHistory />}
 
       {view === 'profile' && (
-        <Profile onBack={() => setView('list')} onProfilePicChange={setProfilePic} />
+        <Profile onBack={() => setView('list')} onProfilePicChange={setProfilePic} onNicknameChange={setNickname} />
       )}
+
+      {view === 'help' && <Help onBack={() => setView('list')} />}
 
       {view === 'movie' && (
         <MovieDetail

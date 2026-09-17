@@ -119,6 +119,14 @@ export const api = {
   getAdminInfo: () => request('/admin/me'),
   getAdminScreens: () => request('/admin/screens'),
   getAdminGenres: () => request('/admin/genres'),
+  getAdminMovies: (q) => request(`/admin/movies${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  getAdminMovie: (id) => request(`/admin/movies/${id}`),
+  updateMovie: (id, movie) => request(`/admin/movies/${id}`, { method: 'PUT', body: JSON.stringify(movie) }),
+
+  // --- Site feedback / suggestions (every logged-in user submits, only site admin reads) ---
+  submitFeedback: (message) => request('/feedback', { method: 'POST', body: JSON.stringify({ message }) }),
+  getAdminFeedback: () => request('/admin/feedback'),
+  deleteAdminFeedback: (id) => request(`/admin/feedback/${id}`, { method: 'DELETE' }),
   getAdminFeaturedMovies: () => request('/admin/featured-movies'),
   featureMovie: (id) => request(`/admin/movies/${id}/feature`, { method: 'POST' }),
   unfeatureMovie: (id) => request(`/admin/movies/${id}/unfeature`, { method: 'POST' }),

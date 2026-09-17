@@ -19,7 +19,7 @@ function toDateInputValue(value) {
   return String(value).slice(0, 10);
 }
 
-export default function Profile({ onBack, onProfilePicChange }) {
+export default function Profile({ onBack, onProfilePicChange, onNicknameChange }) {
   const role = api.getRole();
   const isCustomer = role === 'CUSTOMER';
 
@@ -69,11 +69,13 @@ export default function Profile({ onBack, onProfilePicChange }) {
         setProfile(data);
         setForm({
           username: data.USERNAME || '',
+          nickname: data.NICKNAME || '',
           email: data.EMAIL || '',
           dateOfBirth: toDateInputValue(data.DATE_OF_BIRTH),
           profilePictureUrl: data.PROFILE_PIC || '',
         });
         onProfilePicChange?.(data.PROFILE_PIC || null);
+        onNicknameChange?.(data.NICKNAME || null);
       })
       .catch((err) => setLoadError(err.message))
       .finally(() => setLoading(false));
@@ -88,6 +90,7 @@ export default function Profile({ onBack, onProfilePicChange }) {
   function cancelEditing() {
     setForm({
       username: profile.USERNAME || '',
+      nickname: profile.NICKNAME || '',
       email: profile.EMAIL || '',
       dateOfBirth: toDateInputValue(profile.DATE_OF_BIRTH),
       profilePictureUrl: profile.PROFILE_PIC || '',
@@ -222,7 +225,8 @@ export default function Profile({ onBack, onProfilePicChange }) {
         </div>
 
         <div className="profile-header-info">
-          <h2>{profile.USERNAME}</h2>
+          <h2>{profile.NICKNAME || profile.USERNAME}</h2>
+          {profile.NICKNAME && <p className="movie-meta">@{profile.USERNAME}</p>}
           <span className="admin-badge profile-role-badge">{ROLE_LABELS[profile.ROLE] || profile.ROLE}</span>
           {profile.CINEMA_NAME && <p className="movie-meta">{profile.CINEMA_NAME}</p>}
           <p className="movie-meta">
@@ -263,6 +267,16 @@ export default function Profile({ onBack, onProfilePicChange }) {
           </div>
 
           <div className="admin-form-row">
+            <div className="field">
+              <label>Nickname</label>
+              <input
+                placeholder="What should we call you?"
+                value={form.nickname}
+                onChange={(e) => setForm({ ...form, nickname: e.target.value })}
+                maxLength={50}
+              />
+              <span className="field-hint">Shown instead of your username next to your profile picture. Leave blank to just use your username.</span>
+            </div>
             <div className="field">
               <label>Date of Birth</label>
               <input

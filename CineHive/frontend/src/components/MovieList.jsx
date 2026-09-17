@@ -79,6 +79,22 @@ export default function MovieList({ onSelectMovie }) {
     return `${first.CINEMA_NAME} +${rest.length} more`;
   }
 
+  function formatShowtime(dateStr) {
+    if (!dateStr) return null;
+    const d = new Date(dateStr);
+    if (Number.isNaN(d.getTime())) return null;
+
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(now.getDate() + 1);
+
+    const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+    if (d.toDateString() === now.toDateString()) return `Today, ${time}`;
+    if (d.toDateString() === tomorrow.toDateString()) return `Tomorrow, ${time}`;
+    return `${d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}, ${time}`;
+  }
+
   if (loading) return <p>Loading movies...</p>;
   if (error) return <p className="error">{error}</p>;
 
@@ -142,23 +158,6 @@ export default function MovieList({ onSelectMovie }) {
         )}
 
         </div>
-
-        {genreRows.map((row) => (
-          <div key={row.genreId} className="genre-row">
-            <div className="section-heading">
-              <h2>{row.genreName}</h2>
-              <span className="count">{row.movies.length} titles</span>
-            </div>
-            <div className="carousel-row">
-              {row.movies.map((movie) => (
-                <div key={movie.MOVIE_ID} className="carousel-card" onClick={() => onSelectMovie(movie.MOVIE_ID)}>
-                  {movie.POSTER_URL && <img src={movie.POSTER_URL} alt={movie.TITLE} className="carousel-poster" />}
-                  <span className="carousel-title">{movie.TITLE}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
       </main>
 
       <aside className="now-showing-panel" aria-label="Now Showing in Cinemas">
@@ -206,6 +205,11 @@ export default function MovieList({ onSelectMovie }) {
                     <span className="now-showing-row-cinema" title={movie.CINEMAS.map((c) => c.CINEMA_NAME).join(', ')}>
                       &#127916; {cinemaLabel(movie.CINEMAS)}
                     </span>
+                    {formatShowtime(movie.NEXT_SHOWTIME) && (
+                      <span className="now-showing-row-showtime">
+                        &#128337; {formatShowtime(movie.NEXT_SHOWTIME)}
+                      </span>
+                    )}
                   </div>
                   <span className="now-showing-row-cta">Book</span>
                 </div>
@@ -213,6 +217,25 @@ export default function MovieList({ onSelectMovie }) {
             </div>
           )}
       </aside>
+
+      <div className="home-genre-rows">
+        {genreRows.map((row) => (
+          <div key={row.genreId} className="genre-row">
+            <div className="section-heading">
+              <h2>{row.genreName}</h2>
+              <span className="count">{row.movies.length} titles</span>
+            </div>
+            <div className="carousel-row">
+              {row.movies.map((movie) => (
+                <div key={movie.MOVIE_ID} className="carousel-card" onClick={() => onSelectMovie(movie.MOVIE_ID)}>
+                  {movie.POSTER_URL && <img src={movie.POSTER_URL} alt={movie.TITLE} className="carousel-poster" />}
+                  <span className="carousel-title">{movie.TITLE}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

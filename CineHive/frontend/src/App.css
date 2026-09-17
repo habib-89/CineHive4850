@@ -703,16 +703,21 @@ header.marquee {
 .home-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 380px);
-  gap: 32px;
+  grid-template-areas:
+    "hero panel"
+    "genres genres";
+  column-gap: 32px;
+  row-gap: 40px;
   align-items: start;
 }
 
 .home-main-content {
+  grid-area: hero;
   min-width: 0;
 }
 
 .home-top-row {
-  margin-bottom: 40px;
+  margin-bottom: 0;
 }
 
 .home-top-row .spotlight-hero {
@@ -720,10 +725,8 @@ header.marquee {
 }
 
 .now-showing-panel {
-  position: sticky;
-  top: 20px;
-  height: min(720px, calc(100vh - 40px));
-  min-height: 480px;
+  grid-area: panel;
+  height: 420px;
   display: flex;
   flex-direction: column;
   background: var(--bg-elevated);
@@ -842,6 +845,17 @@ header.marquee {
   text-overflow: ellipsis;
 }
 
+.now-showing-row-showtime {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
 .now-showing-row-cta {
   flex-shrink: 0;
   font-size: 0.66rem;
@@ -862,6 +876,10 @@ header.marquee {
   transform: translateX(0);
 }
 
+.home-genre-rows {
+  grid-area: genres;
+}
+
 @media (max-width: 1180px) {
   .app-container {
     padding-inline: 24px;
@@ -871,7 +889,6 @@ header.marquee {
     flex-direction: column;
   }
   .now-showing-panel {
-    position: static;
     height: auto;
     min-height: 0;
   }
@@ -1624,6 +1641,7 @@ header.marquee {
    ============================================ */
 .tab-nav {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   margin-bottom: 32px;
   border-bottom: 1px solid var(--border);
@@ -2783,6 +2801,172 @@ header.marquee {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
+}
+
+.admin-edit-movies-layout {
+  display: flex;
+  gap: 28px;
+  align-items: flex-start;
+}
+
+.admin-edit-movies-list {
+  flex: 0 0 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.admin-edit-movies-list > input {
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+}
+
+.admin-edit-movies-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+.admin-edit-movies-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--font-body);
+}
+
+.admin-edit-movies-item:hover {
+  background: var(--bg-elevated);
+}
+
+.admin-edit-movies-item.active {
+  border-color: var(--gold);
+  background: var(--bg-elevated);
+}
+
+.admin-edit-movies-thumb {
+  width: 36px;
+  height: 52px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.admin-edit-movies-thumb-placeholder {
+  width: 36px;
+  height: 52px;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  flex-shrink: 0;
+}
+
+.admin-edit-movies-title {
+  display: block;
+  font-size: 0.88rem;
+}
+
+.admin-edit-movies-form {
+  flex: 1;
+  min-width: 0;
+}
+
+.help-page {
+  max-width: 760px;
+}
+
+.help-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin: 20px 0 36px;
+}
+
+.help-section h3 {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  letter-spacing: 0.03em;
+  color: var(--gold);
+  margin-bottom: 8px;
+}
+
+.help-section-text {
+  color: var(--text);
+  font-size: 0.92rem;
+  line-height: 1.55;
+  margin: 0 0 8px;
+}
+
+.help-feedback-section {
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.help-feedback-form {
+  max-width: 520px;
+  margin-top: 12px;
+}
+
+.help-feedback-form textarea {
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  resize: vertical;
+}
+
+.admin-suggestions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 12px;
+}
+
+.admin-suggestion-item {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+}
+
+.admin-suggestion-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.admin-suggestion-author {
+  font-weight: 600;
+  color: var(--gold);
+}
+
+.admin-suggestion-message {
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  margin: 0 0 10px;
 }
 
 .genre-checkbox {

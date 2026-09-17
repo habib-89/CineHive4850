@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
 import AdminAddMovie from './AdminAddMovie';
+import AdminEditMovies from './AdminEditMovies';
+import AdminSuggestions from './AdminSuggestions';
 import AdminShowtimes from './AdminShowtimes';
 import AdminCinemaAdmins from './AdminCinemaAdmins';
 import AdminCustomers from './AdminCustomers';
@@ -8,11 +10,11 @@ import AdminFeaturedMovies from './AdminFeaturedMovies';
 import Profile from './Profile';
 import cinehiveLogo from '../assets/cinehive-logo.png';
 
-export default function AdminApp({ onLogout, onBackToCustomer }) {
+export default function AdminApp({ onLogout, onBackToCustomer, initialTab }) {
   const isCinemaAdmin = api.isCinemaAdmin();
   const isSiteAdmin = api.isSiteAdmin();
   const [cinema, setCinema] = useState(null);
-  const [tab, setTab] = useState('addmovie'); // only relevant for site admin
+  const [tab, setTab] = useState(initialTab || 'addmovie'); // only relevant for site admin
   const [error, setError] = useState('');
   const [showProfile, setShowProfile] = useState(false);
 
@@ -67,25 +69,10 @@ export default function AdminApp({ onLogout, onBackToCustomer }) {
 
       {error && <p className="error">{error}</p>}
 
-      {isSiteAdmin && (
-        <nav className="tab-nav">
-          <button className={`tab ${tab === 'addmovie' ? 'active' : ''}`} onClick={() => setTab('addmovie')}>
-            Add Movie
-          </button>
-          <button className={`tab ${tab === 'featured' ? 'active' : ''}`} onClick={() => setTab('featured')}>
-            Featured Movies
-          </button>
-          <button className={`tab ${tab === 'cinemaadmins' ? 'active' : ''}`} onClick={() => setTab('cinemaadmins')}>
-            Cinema Admins
-          </button>
-          <button className={`tab ${tab === 'customers' ? 'active' : ''}`} onClick={() => setTab('customers')}>
-            Customers
-          </button>
-        </nav>
-      )}
-
       {isCinemaAdmin && <AdminShowtimes />}
       {isSiteAdmin && tab === 'addmovie' && <AdminAddMovie />}
+      {isSiteAdmin && tab === 'editmovie' && <AdminEditMovies />}
+      {isSiteAdmin && tab === 'suggestions' && <AdminSuggestions />}
       {isSiteAdmin && tab === 'featured' && <AdminFeaturedMovies />}
       {isSiteAdmin && tab === 'cinemaadmins' && <AdminCinemaAdmins />}
       {isSiteAdmin && tab === 'customers' && <AdminCustomers />}
